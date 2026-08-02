@@ -316,6 +316,7 @@ async fn post_create(
         Ok(id)
     })
     .await?;
+    state.page_cache.invalidate_all();
 
     Ok(Redirect::to(&format!("/admin/posts/{id}/edit?saved=true")))
 }
@@ -360,6 +361,7 @@ async fn post_update(
         crate::db::tags::set_post_tags(conn, id, &tag_ids)
     })
     .await?;
+    state.page_cache.invalidate_all();
 
     Ok(Redirect::to(&format!("/admin/posts/{id}/edit?saved=true")))
 }
@@ -372,6 +374,7 @@ async fn post_delete(
 ) -> Result<Redirect, AppError> {
     session.verify_csrf(&form.csrf_token)?;
     db::with_conn(&state.db, move |conn| posts::delete(conn, id)).await?;
+    state.page_cache.invalidate_all();
     Ok(Redirect::to("/admin/posts"))
 }
 
@@ -386,6 +389,7 @@ async fn post_publish(
         posts::set_status(conn, id, PostStatus::Published)
     })
     .await?;
+    state.page_cache.invalidate_all();
     Ok(Redirect::to(&format!("/admin/posts/{id}/edit")))
 }
 
@@ -400,6 +404,7 @@ async fn post_unpublish(
         posts::set_status(conn, id, PostStatus::Draft)
     })
     .await?;
+    state.page_cache.invalidate_all();
     Ok(Redirect::to(&format!("/admin/posts/{id}/edit")))
 }
 

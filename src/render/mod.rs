@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod feeds;
 pub mod sparkline;
 

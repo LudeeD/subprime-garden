@@ -87,7 +87,9 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         cookie_key,
         login_ratelimit: std::sync::Arc::new(auth::ratelimit::RateLimiter::new()),
         analytics: std::sync::Arc::new(analytics_handle),
+        page_cache: std::sync::Arc::new(render::cache::PageCache::new()),
     };
+    web::public::warm_cache(&state).await;
     let app = web::build_router(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;

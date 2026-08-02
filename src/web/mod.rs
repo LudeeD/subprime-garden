@@ -19,6 +19,7 @@ use crate::analytics::AnalyticsHandle;
 use crate::auth::ratelimit::RateLimiter;
 use crate::config::Config;
 use crate::db::Pool;
+use crate::render::cache::PageCache;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -27,6 +28,7 @@ pub struct AppState {
     pub cookie_key: Key,
     pub login_ratelimit: Arc<RateLimiter>,
     pub analytics: Arc<AnalyticsHandle>,
+    pub page_cache: Arc<PageCache>,
 }
 
 impl FromRef<AppState> for Key {
