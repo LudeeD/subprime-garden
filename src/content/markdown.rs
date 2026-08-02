@@ -32,7 +32,16 @@ pub struct Rendered {
 }
 
 /// Renders markdown to HTML once, at write time — requests never invoke this.
-pub fn render(markdown: &str, config: &MarkdownConfig) -> Rendered {
+///
+/// `variant_lookup` maps a `/media/`-relative filename to its downscaled
+/// webp variant filename, if one exists (see `media_store`) — used to swap
+/// plain `<img>` markup for a `<picture>` element. Pass `&|_| None` where no
+/// media table is available (e.g. isolated tests).
+pub fn render(
+    markdown: &str,
+    config: &MarkdownConfig,
+    variant_lookup: &dyn Fn(&str) -> Option<String>,
+) -> Rendered {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
@@ -46,7 +55,7 @@ pub fn render(markdown: &str, config: &MarkdownConfig) -> Rendered {
 
     let events: Vec<Event> = Parser::new_ext(markdown, options).collect();
     let events = assign_heading_ids(events);
-    let events = rewrite_image_urls(events);
+    let events = process_images(events, variant_lookup);
     let events = if config.syntax_highlighting {
         highlight_code_blocks(events)
     } else {
@@ -125,26 +134,70 @@ fn assign_heading_ids(events: Vec<Event>) -> Vec<Event> {
     out
 }
 
-/// Bare relative image paths (`foo.png`) become `/media/foo.png`; anything
-/// absolute, schemed, or a data URI passes through untouched.
-fn rewrite_image_urls(events: Vec<Event>) -> Vec<Event> {
-    events
-        .into_iter()
-        .map(|event| match event {
-            Event::Start(Tag::Image {
-                link_type,
-                dest_url,
-                title,
-                id,
-            }) => Event::Start(Tag::Image {
-                link_type,
-                dest_url: CowStr::from(rewrite_image_url(&dest_url)),
-                title,
-                id,
-            }),
-            other => other,
-        })
-        .collect()
+/// Rewrites bare relative image paths (`foo.png`) to `/media/foo.png`
+/// (anything absolute, schemed, or a data URI passes through untouched), and
+/// swaps in a `<picture>` element for any image with a downscaled webp
+/// variant on record.
+fn process_images<'a>(
+    events: Vec<Event<'a>>,
+    variant_lookup: &dyn Fn(&str) -> Option<String>,
+) -> Vec<Event<'a>> {
+    let mut out = Vec::with_capacity(events.len());
+    let mut i = 0;
+    while i < events.len() {
+        if let Event::Start(Tag::Image {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) = &events[i]
+        {
+            let link_type = *link_type;
+            let title = title.clone();
+            let id = id.clone();
+            let dest = rewrite_image_url(dest_url);
+
+            let mut alt = String::new();
+            let mut j = i + 1;
+            while j < events.len() {
+                match &events[j] {
+                    Event::Text(t) | Event::Code(t) => alt.push_str(t),
+                    Event::End(TagEnd::Image) => break,
+                    _ => {}
+                }
+                j += 1;
+            }
+
+            let variant = media_filename_from_media_path(&dest).and_then(variant_lookup);
+            if let Some(variant_filename) = variant {
+                let title_attr = if title.is_empty() {
+                    String::new()
+                } else {
+                    format!(" title=\"{}\"", escape_attr(&title))
+                };
+                let html = format!(
+                    "<picture><source srcset=\"/media/{variant_filename}\" type=\"image/webp\">\
+                     <img loading=\"lazy\" decoding=\"async\" src=\"{}\" alt=\"{}\"{title_attr}></picture>",
+                    escape_attr(&dest),
+                    escape_attr(&alt),
+                );
+                out.push(Event::Html(CowStr::from(html)));
+            } else {
+                out.push(Event::Start(Tag::Image {
+                    link_type,
+                    dest_url: CowStr::from(dest),
+                    title,
+                    id,
+                }));
+                out.extend(events[(i + 1)..=j].iter().cloned());
+            }
+            i = j + 1;
+        } else {
+            out.push(events[i].clone());
+            i += 1;
+        }
+    }
+    out
 }
 
 fn rewrite_image_url(url: &str) -> String {
@@ -157,6 +210,10 @@ fn rewrite_image_url(url: &str) -> String {
     } else {
         format!("/media/{url}")
     }
+}
+
+fn media_filename_from_media_path(path: &str) -> Option<&str> {
+    path.strip_prefix("/media/")
 }
 
 fn highlight_code_blocks(events: Vec<Event>) -> Vec<Event> {
@@ -202,6 +259,10 @@ fn escape_html(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+fn escape_attr(s: &str) -> String {
+    escape_html(s).replace('"', "&quot;")
 }
 
 /// `<img>` has no attrs slot in pulldown-cmark's event model, so this is a
@@ -263,49 +324,73 @@ mod tests {
         }
     }
 
+    fn no_variants(_: &str) -> Option<String> {
+        None
+    }
+
     #[test]
     fn headings_get_stable_unique_ids() {
-        let r = render("# Hello World\n\nBody.\n\n## Hello World\n", &cfg());
+        let r = render("# Hello World\n\nBody.\n\n## Hello World\n", &cfg(), &no_variants);
         assert!(r.html.contains(r#"id="hello-world""#));
         assert!(r.html.contains(r#"id="hello-world-2""#));
     }
 
     #[test]
     fn bare_image_paths_are_rewritten_to_media() {
-        let r = render("![alt](photo.png)", &cfg());
+        let r = render("![alt](photo.png)", &cfg(), &no_variants);
         assert!(r.html.contains(r#"src="/media/photo.png""#));
     }
 
     #[test]
     fn absolute_and_remote_image_paths_pass_through() {
-        let r = render("![a](/already/there.png) ![b](https://example.com/x.png)", &cfg());
+        let r = render(
+            "![a](/already/there.png) ![b](https://example.com/x.png)",
+            &cfg(),
+            &no_variants,
+        );
         assert!(r.html.contains(r#"src="/already/there.png""#));
         assert!(r.html.contains(r#"src="https://example.com/x.png""#));
     }
 
     #[test]
     fn images_get_lazy_loading_attrs() {
-        let r = render("![alt](photo.png)", &cfg());
+        let r = render("![alt](photo.png)", &cfg(), &no_variants);
         assert!(r.html.contains(r#"<img loading="lazy" decoding="async""#));
     }
 
     #[test]
+    fn images_with_a_variant_become_picture_elements() {
+        let r = render("![a photo](photo.png)", &cfg(), &|filename| {
+            (filename == "photo.png").then(|| "abc123-1600.webp".to_string())
+        });
+        assert!(r.html.contains("<picture>"));
+        assert!(r.html.contains(r#"srcset="/media/abc123-1600.webp""#));
+        assert!(r.html.contains(r#"type="image/webp""#));
+        assert!(r.html.contains(r#"src="/media/photo.png""#));
+        assert!(r.html.contains(r#"alt="a photo""#));
+    }
+
+    #[test]
     fn code_blocks_are_highlighted_at_save_time() {
-        let r = render("```rust\nfn main() {}\n```", &cfg());
+        let r = render("```rust\nfn main() {}\n```", &cfg(), &no_variants);
         assert!(r.html.contains("<pre"));
         assert!(r.html.contains("span"));
     }
 
     #[test]
     fn excerpt_is_first_paragraph_plain_text() {
-        let r = render("# Title\n\nThis is the **first** paragraph.\n\nSecond paragraph.", &cfg());
+        let r = render(
+            "# Title\n\nThis is the **first** paragraph.\n\nSecond paragraph.",
+            &cfg(),
+            &no_variants,
+        );
         assert_eq!(r.excerpt, "This is the first paragraph.");
     }
 
     #[test]
     fn content_hash_is_stable_for_identical_html() {
-        let a = render("# Same\n\nBody.", &cfg());
-        let b = render("# Same\n\nBody.", &cfg());
+        let a = render("# Same\n\nBody.", &cfg(), &no_variants);
+        let b = render("# Same\n\nBody.", &cfg(), &no_variants);
         assert_eq!(a.content_hash, b.content_hash);
     }
 }

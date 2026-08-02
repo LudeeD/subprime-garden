@@ -1,7 +1,7 @@
 use askama::Template;
 
 use crate::config::SiteConfig;
-use crate::db::models::Post;
+use crate::db::models::{Media, Post};
 
 /// Fields available to every template as `site`. This struct — not the raw
 /// config — is the contract: see THEMING.md for the full field/template
@@ -132,4 +132,36 @@ pub struct PostEditTemplate {
     pub kind: String,
     pub status: String,
     pub saved: bool,
+}
+
+/// One tile in the admin media grid. `markdown_snippet` is pre-built so the
+/// "copy markdown" button just copies a string — no client-side templating.
+pub struct AdminMediaRow {
+    pub id: i64,
+    pub filename: String,
+    pub original_name: String,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub markdown_snippet: String,
+}
+
+impl From<&Media> for AdminMediaRow {
+    fn from(m: &Media) -> Self {
+        AdminMediaRow {
+            id: m.id,
+            filename: m.filename.clone(),
+            original_name: m.original_name.clone(),
+            width: m.width,
+            height: m.height,
+            markdown_snippet: format!("![{}](/media/{})", m.original_name, m.filename),
+        }
+    }
+}
+
+#[derive(Template)]
+#[template(path = "admin/media.html")]
+pub struct MediaGridTemplate {
+    pub site: SiteView,
+    pub csrf_token: String,
+    pub items: Vec<AdminMediaRow>,
 }

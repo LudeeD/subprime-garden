@@ -1,0 +1,41 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>Media</h1>
+
+<form method="post" action="/admin/media/upload" enctype="multipart/form-data">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Upload (jpeg, png, webp, gif, svg)<br>
+    <input type="file" name="file" accept="image/jpeg,image/png,image/webp,image/gif,image/svg+xml" required>
+  </label>
+  <button type="submit">Upload</button>
+</form>
+
+<div class="media-grid">
+{% for item in items %}
+<figure class="media-tile">
+  <img src="/media/{{ item.filename }}" alt="{{ item.original_name }}" loading="lazy">
+  <figcaption>
+    {% if let Some(width) = item.width %}{% if let Some(height) = item.height %}
+    <span class="post-meta">{{ width }}&times;{{ height }}</span>
+    {% endif %}{% endif %}
+    <button type="button" class="link-button copy-markdown" data-snippet="{{ item.markdown_snippet }}">copy markdown</button>
+    <form class="inline-form" method="post" action="/admin/media/{{ item.id }}/delete" onsubmit="return confirm('Delete this file?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="link-button">delete</button>
+    </form>
+  </figcaption>
+</figure>
+{% endfor %}
+{% if items.is_empty() %}
+<p>No uploads yet.</p>
+{% endif %}
+</div>
+
+<script>
+document.querySelectorAll(".copy-markdown").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    navigator.clipboard.writeText(btn.dataset.snippet);
+  });
+});
+</script>
+{% endblock %}

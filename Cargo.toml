@@ -13,11 +13,11 @@ clap = { version = "4", features = ["derive", "env"] }
 
 # async runtime + web
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "fs"] }
-axum = { version = "0.7" }
+axum = { version = "0.7", features = ["multipart"] }
 axum-extra = { version = "0.9", features = ["cookie-private"] }
 cookie = { version = "0.18", features = ["key-expansion"] }
 tower = "0.4"
-tower-http = { version = "0.5", features = ["compression-br", "compression-gzip", "trace"] }
+tower-http = { version = "0.5", features = ["compression-br", "compression-gzip", "trace", "fs", "set-header"] }
 
 # config
 figment = { version = "0.10", features = ["toml", "env"] }
@@ -53,6 +53,7 @@ syntect = { version = "5", default-features = false, features = ["default-fancy"
 slug = "0.1"
 blake3 = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 
 [profile.release]
 opt-level = 3

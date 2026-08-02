@@ -108,6 +108,20 @@ impl Default for MarkdownConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MediaConfig {
+    pub max_upload_bytes: u64,
+}
+
+impl Default for MediaConfig {
+    fn default() -> Self {
+        Self {
+            max_upload_bytes: 10 * 1024 * 1024,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Config {
@@ -116,6 +130,7 @@ pub struct Config {
     pub auth: AuthConfig,
     pub analytics: AnalyticsConfig,
     pub markdown: MarkdownConfig,
+    pub media: MediaConfig,
 }
 
 #[derive(Debug, thiserror::Error)]

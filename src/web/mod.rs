@@ -5,10 +5,13 @@ pub mod public;
 use std::sync::Arc;
 
 use axum::extract::FromRef;
+use axum::http::{header, HeaderValue};
 use axum::routing::get;
 use axum::Router;
 use axum_extra::extract::cookie::Key;
 use tower_http::compression::CompressionLayer;
+use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::auth::ratelimit::RateLimiter;
@@ -45,8 +48,17 @@ pub fn build_router(state: AppState) -> Router {
         .route("/static/style.css", get(style_css))
         .route("/:slug", get(public::show_post));
 
+    // Content-hashed filenames make every response immutable — cache forever.
+    let media = Router::new()
+        .nest_service("/media", ServeDir::new(&state.config.server.media_dir))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        ));
+
     Router::new()
         .merge(public)
+        .merge(media)
         .nest("/admin", admin::router())
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())

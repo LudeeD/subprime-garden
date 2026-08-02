@@ -78,3 +78,32 @@ impl Post {
         })
     }
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Media {
+    pub id: i64,
+    pub filename: String,
+    pub original_name: String,
+    pub mime: String,
+    pub bytes: i64,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub variant_filename: Option<String>,
+    pub created_at: String,
+}
+
+impl Media {
+    pub(super) fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        Ok(Media {
+            id: row.get("id")?,
+            filename: row.get("filename")?,
+            original_name: row.get("original_name")?,
+            mime: row.get("mime")?,
+            bytes: row.get("bytes")?,
+            width: row.get("width")?,
+            height: row.get("height")?,
+            variant_filename: row.get("variant_filename")?,
+            created_at: row.get("created_at")?,
+        })
+    }
+}

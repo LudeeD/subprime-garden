@@ -4,6 +4,7 @@ mod config;
 mod content;
 mod db;
 mod error;
+mod media_store;
 mod render;
 mod web;
 

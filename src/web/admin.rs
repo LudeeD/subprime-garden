@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use axum::extract::{ConnectInfo, Path, Query, State};
+use axum::extract::{ConnectInfo, Multipart, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -12,11 +12,12 @@ use crate::auth::cookie::AdminSession;
 use crate::auth::{self, SessionData};
 use crate::content::{markdown, slug};
 use crate::db::models::{Post, PostKind, PostStatus};
-use crate::db::{self, posts};
+use crate::db::{self, media, posts};
 use crate::error::AppError;
+use crate::media_store;
 use crate::render::{
-    AdminPostRow, DashboardTemplate, LoginTemplate, PostEditTemplate, PostTemplate,
-    PostsListTemplate, SiteView,
+    AdminMediaRow, AdminPostRow, DashboardTemplate, LoginTemplate, MediaGridTemplate,
+    PostEditTemplate, PostTemplate, PostsListTemplate, SiteView,
 };
 
 use super::{net, AppState};
@@ -34,6 +35,9 @@ pub fn router() -> Router<AppState> {
         .route("/posts/:id/publish", post(post_publish))
         .route("/posts/:id/unpublish", post(post_unpublish))
         .route("/preview/:id", get(post_preview))
+        .route("/media", get(media_grid))
+        .route("/media/upload", post(media_upload))
+        .route("/media/:id/delete", post(media_delete))
 }
 
 #[derive(Deserialize)]
@@ -224,7 +228,9 @@ async fn post_create(
             requested_slug.as_str()
         };
         let post_slug = slug::unique_slug(conn, slug_source, None)?;
-        let rendered = markdown::render(&markdown_src, &markdown_cfg);
+        let rendered = markdown::render(&markdown_src, &markdown_cfg, &|filename| {
+            media::variant_lookup(conn, filename)
+        });
         let new = posts::NewPost {
             slug: post_slug,
             title,
@@ -265,7 +271,9 @@ async fn post_update(
             requested_slug.as_str()
         };
         let post_slug = slug::unique_slug(conn, slug_source, Some(id))?;
-        let rendered = markdown::render(&markdown_src, &markdown_cfg);
+        let rendered = markdown::render(&markdown_src, &markdown_cfg, &|filename| {
+            media::variant_lookup(conn, filename)
+        });
         let edit = posts::PostEdit {
             slug: post_slug,
             title,
@@ -333,4 +341,99 @@ async fn post_preview(
         site: SiteView::from(&state.config.site),
         post: crate::render::PostView::from(&post),
     })
+}
+
+async fn media_grid(
+    session: AdminSession,
+    State(state): State<AppState>,
+) -> Result<MediaGridTemplate, AppError> {
+    let items = db::with_conn(&state.db, |conn| media::list_all(conn)).await?;
+    Ok(MediaGridTemplate {
+        site: SiteView::from(&state.config.site),
+        csrf_token: session.csrf,
+        items: items.iter().map(AdminMediaRow::from).collect(),
+    })
+}
+
+async fn media_upload(
+    session: AdminSession,
+    State(state): State<AppState>,
+    mut multipart: Multipart,
+) -> Result<Redirect, AppError> {
+    let mut csrf_token: Option<String> = None;
+    let mut file_bytes: Option<Vec<u8>> = None;
+    let mut file_name: Option<String> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| anyhow::anyhow!("invalid upload: {e}"))?
+    {
+        match field.name().unwrap_or_default() {
+            "csrf_token" => {
+                csrf_token = Some(
+                    field
+                        .text()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("invalid upload: {e}"))?,
+                );
+            }
+            "file" => {
+                file_name = field.file_name().map(str::to_string);
+                file_bytes = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("invalid upload: {e}"))?
+                        .to_vec(),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    session.verify_csrf(csrf_token.as_deref().unwrap_or(""))?;
+    let bytes = file_bytes.filter(|b| !b.is_empty()).ok_or_else(|| anyhow::anyhow!("no file uploaded"))?;
+    let original_name = file_name.unwrap_or_else(|| "upload".to_string());
+
+    let media_dir = state.config.server.media_dir.clone();
+    let max_bytes = state.config.media.max_upload_bytes;
+    let stored = media_store::store(&media_dir, &bytes, &original_name, max_bytes)
+        .map_err(|e| anyhow::anyhow!("upload rejected: {e}"))?;
+
+    db::with_conn(&state.db, move |conn| {
+        media::insert(
+            conn,
+            &media::NewMedia {
+                filename: stored.filename,
+                original_name: stored.original_name,
+                mime: stored.mime,
+                bytes: stored.bytes,
+                width: stored.width,
+                height: stored.height,
+                variant_filename: stored.variant_filename,
+            },
+        )
+    })
+    .await?;
+
+    Ok(Redirect::to("/admin/media"))
+}
+
+async fn media_delete(
+    session: AdminSession,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Form(form): Form<CsrfOnly>,
+) -> Result<Redirect, AppError> {
+    session.verify_csrf(&form.csrf_token)?;
+
+    let media_dir = state.config.server.media_dir.clone();
+    let item = db::with_conn(&state.db, move |conn| media::get_by_id(conn, id))
+        .await?
+        .ok_or(AppError::NotFound)?;
+    media_store::delete_files(&media_dir, &item);
+    db::with_conn(&state.db, move |conn| media::delete(conn, id)).await?;
+
+    Ok(Redirect::to("/admin/media"))
 }
