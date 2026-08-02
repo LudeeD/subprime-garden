@@ -1,0 +1,191 @@
+use std::net::SocketAddr;
+use std::path::PathBuf;
+
+use figment::providers::{Env, Format, Serialized, Toml};
+use figment::Figment;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SiteConfig {
+    pub title: String,
+    pub description: String,
+    pub base_url: String,
+    pub author: String,
+    pub timezone: String,
+    pub posts_per_page: u32,
+}
+
+impl Default for SiteConfig {
+    fn default() -> Self {
+        Self {
+            title: "subprime garden".into(),
+            description: String::new(),
+            base_url: "http://localhost:8080".into(),
+            author: String::new(),
+            timezone: "UTC".into(),
+            posts_per_page: 20,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ServerConfig {
+    pub bind: String,
+    pub database: PathBuf,
+    pub media_dir: PathBuf,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            bind: "127.0.0.1:8080".into(),
+            database: PathBuf::from("./data/garden.db"),
+            media_dir: PathBuf::from("./data/media"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AuthConfig {
+    pub username: String,
+    pub password_hash: String,
+    pub session_secret: String,
+    pub session_ttl_days: u32,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            username: String::new(),
+            password_hash: String::new(),
+            session_secret: String::new(),
+            session_ttl_days: 30,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AnalyticsConfig {
+    pub enabled: bool,
+    pub raw_retention_days: u32,
+    pub ignore_bots: bool,
+}
+
+impl Default for AnalyticsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            raw_retention_days: 30,
+            ignore_bots: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MarkdownConfig {
+    pub syntax_highlighting: bool,
+    pub smart_punctuation: bool,
+    pub footnotes: bool,
+}
+
+impl Default for MarkdownConfig {
+    fn default() -> Self {
+        Self {
+            syntax_highlighting: true,
+            smart_punctuation: true,
+            footnotes: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Config {
+    pub site: SiteConfig,
+    pub server: ServerConfig,
+    pub auth: AuthConfig,
+    pub analytics: AnalyticsConfig,
+    pub markdown: MarkdownConfig,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("failed to load configuration: {0}")]
+    Load(#[from] figment::Error),
+    #[error(
+        "auth.password_hash does not look like an argon2 hash (expected it to start with \
+         `$argon2`). Run `subprime-garden hash-password` and paste the result, don't put a \
+         plaintext password in config."
+    )]
+    PlaintextPassword,
+    #[error("auth.username is empty — set [auth] username in the config or SUBPRIME_AUTH__USERNAME")]
+    MissingUsername,
+    #[error(
+        "auth.session_secret is empty or too short (need at least 32 bytes) — set [auth] \
+         session_secret or SUBPRIME_AUTH__SESSION_SECRET"
+    )]
+    WeakSessionSecret,
+    #[error("server.bind is not a valid socket address: {0}")]
+    InvalidBind(String),
+}
+
+impl Config {
+    /// Load from an optional TOML file, then apply `SUBPRIME_*` env var overrides.
+    /// Env vars always win, so secrets never need to touch disk.
+    pub fn load(path: Option<&PathBuf>) -> Result<Self, ConfigError> {
+        let mut figment = Figment::from(Serialized::defaults(Config::default()));
+
+        if let Some(path) = path {
+            figment = figment.merge(Toml::file(path));
+        }
+
+        // SUBPRIME_SITE__TITLE -> site.title, etc.
+        figment = figment.merge(Env::prefixed("SUBPRIME_").split("__").lowercase(true));
+
+        let config: Config = figment.extract()?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        if self.auth.username.trim().is_empty() {
+            return Err(ConfigError::MissingUsername);
+        }
+        if !self.auth.password_hash.starts_with("$argon2") {
+            return Err(ConfigError::PlaintextPassword);
+        }
+        if self.auth.session_secret.len() < 32 {
+            return Err(ConfigError::WeakSessionSecret);
+        }
+        self.bind_addr()
+            .map_err(|_| ConfigError::InvalidBind(self.server.bind.clone()))?;
+        Ok(())
+    }
+
+    pub fn bind_addr(&self) -> Result<SocketAddr, std::net::AddrParseError> {
+        self.server.bind.parse()
+    }
+
+    /// True when running inside a container (detected via `/.dockerenv` or cgroup).
+    pub fn in_container() -> bool {
+        std::path::Path::new("/.dockerenv").exists()
+            || std::fs::read_to_string("/proc/1/cgroup")
+                .map(|s| s.contains("docker") || s.contains("kubepods"))
+                .unwrap_or(false)
+    }
+
+    pub fn warn_if_loopback_in_container(&self) {
+        if Self::in_container() && self.server.bind.starts_with("127.0.0.1") {
+            tracing::warn!(
+                "server.bind is {} but this looks like a container — it will accept no \
+                 external traffic. Set SUBPRIME_SERVER__BIND=0.0.0.0:8080.",
+                self.server.bind
+            );
+        }
+    }
+}

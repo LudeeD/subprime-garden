@@ -1,0 +1,46 @@
+[package]
+name = "subprime-garden"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "subprime-garden"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# async runtime + web
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "fs"] }
+axum = { version = "0.7" }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["compression-br", "compression-gzip", "trace"] }
+
+# config
+figment = { version = "0.10", features = ["toml", "env"] }
+serde = { version = "1", features = ["derive"] }
+
+# db
+rusqlite = { version = "0.31", features = ["bundled"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.24"
+rusqlite_migration = "1"
+
+# errors + logging
+thiserror = "1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# auth
+argon2 = "0.5"
+rand_core = { version = "0.6", features = ["getrandom"] }
+rpassword = "7"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
