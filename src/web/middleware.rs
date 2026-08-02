@@ -45,18 +45,19 @@ pub async fn track_pageview(
 
     let response = next.run(req).await;
 
-    if state.analytics.enabled && should_track(&method, &path, &response) {
-        if !(state.analytics.ignore_bots && analytics::hashing::is_bot(&user_agent)) {
-            let ip = net::client_ip(peer, &headers, trust_proxy_headers);
-            let visitor_hash = analytics::hash_visitor(&state.analytics, ip, &user_agent).await;
-            let referrer_host =
-                analytics::hashing::referrer_host(referrer.as_deref(), &state.config.site.base_url);
-            state.analytics.record(PageviewEvent {
-                path,
-                referrer_host,
-                visitor_hash,
-            });
-        }
+    if state.analytics.enabled
+        && should_track(&method, &path, &response)
+        && !(state.analytics.ignore_bots && analytics::hashing::is_bot(&user_agent))
+    {
+        let ip = net::client_ip(peer, &headers, trust_proxy_headers);
+        let visitor_hash = analytics::hash_visitor(&state.analytics, ip, &user_agent).await;
+        let referrer_host =
+            analytics::hashing::referrer_host(referrer.as_deref(), &state.config.site.base_url);
+        state.analytics.record(PageviewEvent {
+            path,
+            referrer_host,
+            visitor_hash,
+        });
     }
 
     response

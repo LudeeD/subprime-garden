@@ -1,0 +1,44 @@
+# Same as compose.yaml, plus a Caddy sidecar for automatic HTTPS. Point
+# SUBPRIME_DOMAIN (in .env) at your server's DNS and Caddy gets a
+# Let's Encrypt certificate on first boot — nothing else to configure.
+services:
+  garden:
+    image: ghcr.io/OWNER/subprime-garden:latest
+    restart: unless-stopped
+    expose: ["8080"]
+    volumes:
+      - ./data:/data
+      - ./import:/import:ro
+    environment:
+      SUBPRIME_SERVER__BIND: "0.0.0.0:8080"
+      SUBPRIME_SERVER__DATABASE: "/data/garden.db"
+      SUBPRIME_SERVER__MEDIA_DIR: "/data/media"
+      SUBPRIME_SITE__TITLE: "subprime garden"
+      SUBPRIME_SITE__BASE_URL: "https://${SUBPRIME_DOMAIN}"
+      SUBPRIME_AUTH__USERNAME: "owner"
+      SUBPRIME_AUTH__PASSWORD_HASH: ${GARDEN_PASSWORD_HASH}
+      SUBPRIME_AUTH__SESSION_SECRET: ${GARDEN_SESSION_SECRET}
+    healthcheck:
+      test: ["CMD", "/subprime-garden", "healthcheck"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SUBPRIME_DOMAIN: ${SUBPRIME_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - garden
+
+volumes:
+  caddy_data:
+  caddy_config:

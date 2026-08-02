@@ -1,0 +1,40 @@
+# Copy to garden.toml and fill in real values, or skip this file entirely and
+# configure via SUBPRIME_* environment variables (see README.md) — both work,
+# and env vars always win when both are present.
+
+[site]
+title = "subprime garden"
+description = "A blog about not much in particular."
+base_url = "https://garden.example"
+author = "Your Name"
+timezone = "UTC"
+posts_per_page = 20
+
+[server]
+bind = "127.0.0.1:8080"
+database = "./data/garden.db"
+media_dir = "./data/media"
+# Only set this to true if you're behind a reverse proxy you control —
+# otherwise it's a trivial IP-spoofing vector.
+trust_proxy_headers = false
+
+[auth]
+username = "owner"
+# Generate with: subprime-garden hash-password
+password_hash = "$argon2id$v=19$m=19456,t=2,p=1$REPLACE$ME"
+# Generate with: openssl rand -base64 48
+session_secret = "replace-with-at-least-32-random-bytes"
+session_ttl_days = 30
+
+[analytics]
+enabled = true
+raw_retention_days = 30
+ignore_bots = true
+
+[markdown]
+syntax_highlighting = true
+smart_punctuation = true
+footnotes = true
+
+[media]
+max_upload_bytes = 10485760

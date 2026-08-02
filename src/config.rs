@@ -157,6 +157,9 @@ pub enum ConfigError {
 impl Config {
     /// Load from an optional TOML file, then apply `SUBPRIME_*` env var overrides.
     /// Env vars always win, so secrets never need to touch disk.
+    // Runs once at startup, never a hot path — not worth boxing ConfigError
+    // just to shrink the (large, figment-provided) Err variant.
+    #[allow(clippy::result_large_err)]
     pub fn load(path: Option<&PathBuf>) -> Result<Self, ConfigError> {
         let mut figment = Figment::from(Serialized::defaults(Config::default()));
 
@@ -172,6 +175,7 @@ impl Config {
         Ok(config)
     }
 
+    #[allow(clippy::result_large_err)]
     fn validate(&self) -> Result<(), ConfigError> {
         if self.auth.username.trim().is_empty() {
             return Err(ConfigError::MissingUsername);

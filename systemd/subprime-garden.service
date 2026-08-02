@@ -1,0 +1,25 @@
+[Unit]
+Description=subprime-garden
+After=network.target
+
+[Service]
+Type=simple
+User=subprime-garden
+Group=subprime-garden
+ExecStart=/usr/local/bin/subprime-garden serve --config /etc/subprime-garden/garden.toml
+# Secrets that shouldn't live in the TOML file (password hash, session
+# secret) can go here instead, as SUBPRIME_* env vars — see README.md.
+EnvironmentFile=-/etc/subprime-garden/garden.env
+Restart=on-failure
+RestartSec=2
+
+# The binary only ever needs to write under /var/lib/subprime-garden
+# (database, WAL files, media) — everything else is read-only.
+ReadWritePaths=/var/lib/subprime-garden
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

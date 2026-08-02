@@ -434,7 +434,7 @@ async fn media_grid(
     session: AdminSession,
     State(state): State<AppState>,
 ) -> Result<MediaGridTemplate, AppError> {
-    let items = db::with_conn(&state.db, |conn| media::list_all(conn)).await?;
+    let items = db::with_conn(&state.db, media::list_all).await?;
     Ok(MediaGridTemplate {
         site: SiteView::from(&state.config.site),
         csrf_token: session.csrf,
