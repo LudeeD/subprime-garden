@@ -54,6 +54,9 @@ slug = "0.1"
 blake3 = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
+serde_yaml = "0.9"
+toml = "0.8"
+walkdir = "2"
 
 [profile.release]
 opt-level = 3

@@ -48,6 +48,58 @@ pub fn insert(conn: &Connection, new: &NewPost) -> rusqlite::Result<i64> {
     Ok(conn.last_insert_rowid())
 }
 
+/// Insert used by `import`, which needs to preserve the original post date
+/// (from frontmatter or file mtime) instead of stamping "now".
+pub struct ImportPost {
+    pub slug: String,
+    pub title: String,
+    pub markdown: String,
+    pub html: String,
+    pub excerpt: String,
+    pub content_hash: String,
+    pub status: PostStatus,
+    pub kind: PostKind,
+    pub created_at: String,
+    pub published_at: Option<String>,
+}
+
+pub fn insert_imported(conn: &Connection, new: &ImportPost) -> rusqlite::Result<i64> {
+    conn.execute(
+        "INSERT INTO posts (slug, title, markdown, html, excerpt, content_hash, status, kind,
+             created_at, updated_at, published_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?10)",
+        params![
+            new.slug,
+            new.title,
+            new.markdown,
+            new.html,
+            new.excerpt,
+            new.content_hash,
+            new.status.as_str(),
+            new.kind.as_str(),
+            new.created_at,
+            new.published_at,
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Rebuilds only the derived HTML/excerpt/hash for a post — used by
+/// `rerender`, which must not touch slug, title, or timestamps.
+pub fn update_rendered(
+    conn: &Connection,
+    id: i64,
+    html: &str,
+    excerpt: &str,
+    content_hash: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE posts SET html = ?1, excerpt = ?2, content_hash = ?3 WHERE id = ?4",
+        params![html, excerpt, content_hash, id],
+    )?;
+    Ok(())
+}
+
 pub struct PostEdit {
     pub slug: String,
     pub title: String,

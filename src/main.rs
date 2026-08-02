@@ -43,17 +43,27 @@ async fn main() -> anyhow::Result<()> {
             let config = Config::load(cli.config.as_ref())?;
             cli::healthcheck::run(&config)?;
         }
-        Command::Import { dir, .. } => {
-            eprintln!("import not yet implemented (dir: {})", dir.display());
-            std::process::exit(1);
+        Command::Import { dir, published, force, dry_run } => {
+            let config = Config::load(cli.config.as_ref())?;
+            let pool = db::open_pool(&config.server.database)?;
+            let mut conn = pool.get()?;
+            db::run_migrations(&mut conn)?;
+            let opts = cli::import::ImportOptions { published, force, dry_run };
+            cli::import::run(&mut conn, &dir, &opts, &config.markdown)?;
         }
         Command::Export { dir } => {
-            eprintln!("export not yet implemented (dir: {})", dir.display());
-            std::process::exit(1);
+            let config = Config::load(cli.config.as_ref())?;
+            let pool = db::open_pool(&config.server.database)?;
+            let mut conn = pool.get()?;
+            db::run_migrations(&mut conn)?;
+            cli::export::run(&conn, &dir)?;
         }
         Command::Rerender => {
-            eprintln!("rerender not yet implemented");
-            std::process::exit(1);
+            let config = Config::load(cli.config.as_ref())?;
+            let pool = db::open_pool(&config.server.database)?;
+            let mut conn = pool.get()?;
+            db::run_migrations(&mut conn)?;
+            cli::rerender::run(&conn, &config.markdown)?;
         }
     }
 

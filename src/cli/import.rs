@@ -1,0 +1,182 @@
+use std::path::{Path, PathBuf};
+
+use anyhow::Context;
+use rusqlite::Connection;
+
+use crate::config::MarkdownConfig;
+use crate::content::{frontmatter, markdown, slug};
+use crate::db::media;
+use crate::db::models::{PostKind, PostStatus};
+use crate::db::posts::{self, ImportPost, PostEdit};
+use crate::db::tags;
+
+pub struct ImportOptions {
+    pub published: bool,
+    pub force: bool,
+    pub dry_run: bool,
+}
+
+pub fn run(conn: &mut Connection, dir: &Path, opts: &ImportOptions, markdown_cfg: &MarkdownConfig) -> anyhow::Result<()> {
+    let files = find_markdown_files(dir)?;
+    if files.is_empty() {
+        println!("no .md files found under {}", dir.display());
+        return Ok(());
+    }
+
+    let mut imported = 0;
+    let mut skipped = 0;
+    let mut errors = 0;
+
+    for path in files {
+        match import_one(conn, &path, opts, markdown_cfg) {
+            Ok(Outcome::Inserted(slug)) => {
+                println!("imported:  {slug:<40} {}", path.display());
+                imported += 1;
+            }
+            Ok(Outcome::Updated(slug)) => {
+                println!("updated:   {slug:<40} {}", path.display());
+                imported += 1;
+            }
+            Ok(Outcome::Skipped(slug)) => {
+                println!("skipped:   {slug:<40} {} (already exists, use --force to overwrite)", path.display());
+                skipped += 1;
+            }
+            Err(e) => {
+                eprintln!("error:     {}: {e}", path.display());
+                errors += 1;
+            }
+        }
+    }
+
+    let verb = if opts.dry_run { "would import" } else { "imported" };
+    println!("\n{imported} {verb}, {skipped} skipped, {errors} errors");
+    Ok(())
+}
+
+enum Outcome {
+    Inserted(String),
+    Updated(String),
+    Skipped(String),
+}
+
+fn import_one(
+    conn: &mut Connection,
+    path: &Path,
+    opts: &ImportOptions,
+    markdown_cfg: &MarkdownConfig,
+) -> anyhow::Result<Outcome> {
+    let raw = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let mtime = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .unwrap_or(std::time::SystemTime::now());
+
+    let parsed = frontmatter::parse(&raw);
+    let (h1_title, body) = frontmatter::extract_h1_title(&parsed.body);
+
+    let title = parsed
+        .frontmatter
+        .title
+        .clone()
+        .or(h1_title)
+        .unwrap_or_else(|| filename_title(path));
+
+    let desired_slug = match &parsed.frontmatter.slug {
+        Some(s) if !s.trim().is_empty() => slug::slugify(s),
+        _ => slug::slugify(&title),
+    };
+
+    let created_at = frontmatter::resolve_date(parsed.frontmatter.date.as_deref(), mtime);
+    let status = match parsed.frontmatter.draft {
+        Some(true) => PostStatus::Draft,
+        Some(false) => PostStatus::Published,
+        None => {
+            if opts.published {
+                PostStatus::Published
+            } else {
+                PostStatus::Draft
+            }
+        }
+    };
+    let published_at = matches!(status, PostStatus::Published).then(|| created_at.clone());
+
+    let existing = posts::get_by_slug(conn, &desired_slug, true)?;
+    if existing.is_some() && !opts.force {
+        return Ok(Outcome::Skipped(desired_slug));
+    }
+    if opts.dry_run {
+        return Ok(if existing.is_some() {
+            Outcome::Updated(desired_slug)
+        } else {
+            Outcome::Inserted(desired_slug)
+        });
+    }
+
+    let mut rendered = markdown::render(&body, markdown_cfg, &|filename| media::variant_lookup(conn, filename));
+    if let Some(description) = &parsed.frontmatter.description {
+        if !description.trim().is_empty() {
+            rendered.excerpt = description.trim().to_string();
+        }
+    }
+    let tag_ids = tags::find_or_create(conn, &parsed.frontmatter.tags)?;
+
+    let (post_id, outcome) = match existing {
+        Some(existing) => {
+            posts::update_content(
+                conn,
+                existing.id,
+                &PostEdit {
+                    slug: desired_slug.clone(),
+                    title,
+                    markdown: body,
+                    html: rendered.html,
+                    excerpt: rendered.excerpt,
+                    content_hash: rendered.content_hash,
+                },
+            )?;
+            posts::set_status(conn, existing.id, status)?;
+            (existing.id, Outcome::Updated(desired_slug))
+        }
+        None => {
+            let id = posts::insert_imported(
+                conn,
+                &ImportPost {
+                    slug: desired_slug.clone(),
+                    title,
+                    markdown: body,
+                    html: rendered.html,
+                    excerpt: rendered.excerpt,
+                    content_hash: rendered.content_hash,
+                    status,
+                    kind: PostKind::Post,
+                    created_at,
+                    published_at,
+                },
+            )?;
+            (id, Outcome::Inserted(desired_slug))
+        }
+    };
+    tags::set_post_tags(conn, post_id, &tag_ids)?;
+
+    Ok(outcome)
+}
+
+fn filename_title(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("untitled")
+        .replace(['-', '_'], " ")
+        .trim()
+        .to_string()
+}
+
+fn find_markdown_files(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let mut files: Vec<PathBuf> = walkdir::WalkDir::new(dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .map(|e| e.into_path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("md"))
+        .collect();
+    files.sort();
+    Ok(files)
+}
