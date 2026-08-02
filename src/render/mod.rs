@@ -69,3 +69,67 @@ pub struct PostTemplate {
     pub site: SiteView,
     pub post: PostView,
 }
+
+/// One row in an admin post listing (dashboard recent list, /admin/posts table).
+pub struct AdminPostRow {
+    pub id: i64,
+    pub slug: String,
+    pub title: String,
+    pub status: String,
+    pub kind: String,
+    pub updated_at_human: String,
+}
+
+impl From<&Post> for AdminPostRow {
+    fn from(p: &Post) -> Self {
+        AdminPostRow {
+            id: p.id,
+            slug: p.slug.clone(),
+            title: p.title.clone(),
+            status: p.status.as_str().to_string(),
+            kind: p.kind.as_str().to_string(),
+            updated_at_human: humanize_date(Some(&p.updated_at)),
+        }
+    }
+}
+
+#[derive(Template)]
+#[template(path = "admin/login.html")]
+pub struct LoginTemplate {
+    pub site: SiteView,
+    pub csrf_token: String,
+    pub error: Option<String>,
+}
+
+#[derive(Template)]
+#[template(path = "admin/dashboard.html")]
+pub struct DashboardTemplate {
+    pub site: SiteView,
+    pub csrf_token: String,
+    pub recent_posts: Vec<AdminPostRow>,
+    pub published_count: i64,
+    pub draft_count: i64,
+}
+
+#[derive(Template)]
+#[template(path = "admin/posts_list.html")]
+pub struct PostsListTemplate {
+    pub site: SiteView,
+    pub csrf_token: String,
+    pub posts: Vec<AdminPostRow>,
+}
+
+#[derive(Template)]
+#[template(path = "admin/post_edit.html")]
+pub struct PostEditTemplate {
+    pub site: SiteView,
+    pub csrf_token: String,
+    pub is_new: bool,
+    pub id: i64,
+    pub slug: String,
+    pub title: String,
+    pub markdown: String,
+    pub kind: String,
+    pub status: String,
+    pub saved: bool,
+}

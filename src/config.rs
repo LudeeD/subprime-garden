@@ -35,6 +35,10 @@ pub struct ServerConfig {
     pub bind: String,
     pub database: PathBuf,
     pub media_dir: PathBuf,
+    /// Trust `X-Forwarded-For` for client IP (rate limiting, analytics
+    /// hashing). Only enable this behind a reverse proxy you control —
+    /// otherwise it's a trivial IP-spoofing and rate-limit bypass vector.
+    pub trust_proxy_headers: bool,
 }
 
 impl Default for ServerConfig {
@@ -43,6 +47,7 @@ impl Default for ServerConfig {
             bind: "127.0.0.1:8080".into(),
             database: PathBuf::from("./data/garden.db"),
             media_dir: PathBuf::from("./data/media"),
+            trust_proxy_headers: false,
         }
     }
 }

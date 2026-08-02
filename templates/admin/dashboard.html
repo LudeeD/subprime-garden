@@ -1,0 +1,17 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>Dashboard</h1>
+<p>{{ published_count }} published, {{ draft_count }} draft{% if draft_count != 1 %}s{% endif %}.</p>
+<h2>Recent posts</h2>
+<ul class="admin-post-list">
+{% for post in recent_posts %}
+<li>
+  <a href="/admin/posts/{{ post.id }}/edit">{{ post.title }}</a>
+  <span class="post-meta">{{ post.status }} · {{ post.updated_at_human }}</span>
+</li>
+{% endfor %}
+{% if recent_posts.is_empty() %}
+<li>No posts yet. <a href="/admin/posts/new">Write one</a>.</li>
+{% endif %}
+</ul>
+{% endblock %}

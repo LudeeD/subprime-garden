@@ -141,3 +141,101 @@ hr {
   border: none;
   border-top: 1px solid var(--border);
 }
+
+/* --- admin (shares everything above; kept plain on purpose) --- */
+
+.site-header nav form.inline-form {
+  display: inline;
+  margin-left: 1rem;
+}
+
+form.inline-form {
+  display: inline;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--link);
+  text-decoration: underline;
+  font: inherit;
+  cursor: pointer;
+}
+
+form label {
+  display: block;
+  margin-bottom: 1rem;
+}
+
+form input[type="text"],
+form input[type="password"],
+form textarea,
+form select {
+  width: 100%;
+  font: inherit;
+  padding: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+form textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.95rem;
+}
+
+form button[type="submit"] {
+  font: inherit;
+  padding: 0.5rem 1.2rem;
+  border: 1px solid var(--link);
+  border-radius: 4px;
+  background: var(--link);
+  color: var(--bg);
+  cursor: pointer;
+}
+
+.flash {
+  padding: 0.5rem 0.8rem;
+  border-radius: 4px;
+  background: var(--code-bg);
+  display: inline-block;
+}
+
+.flash-error {
+  border: 1px solid #c0392b;
+}
+
+.admin-post-list {
+  list-style: none;
+  padding: 0;
+}
+
+.admin-post-list li {
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.post-meta {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-left: 0.5rem;
+}
+
+.admin-post-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.admin-post-table th,
+.admin-post-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+
+.login-page {
+  max-width: 24rem;
+  margin: 4rem auto;
+}

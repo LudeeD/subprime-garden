@@ -153,6 +153,14 @@ pub fn count_published(conn: &Connection) -> rusqlite::Result<i64> {
     )
 }
 
+pub fn count_by_status(conn: &Connection, status: PostStatus) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM posts WHERE status = ?1",
+        params![status.as_str()],
+        |row| row.get(0),
+    )
+}
+
 /// Admin listing, optionally filtered by status, newest-created first.
 pub fn list_all(
     conn: &Connection,

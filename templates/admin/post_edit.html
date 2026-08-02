@@ -1,0 +1,65 @@
+{% extends "admin/base.html" %}
+{% block title %}{% if is_new %}New post{% else %}Edit — {{ title }}{% endif %} — {{ site.title }}{% endblock %}
+{% block content %}
+<h1>{% if is_new %}New post{% else %}Edit post{% endif %}</h1>
+{% if saved %}<p class="flash">Saved.</p>{% endif %}
+
+<form method="post" action="{% if is_new %}/admin/posts{% else %}/admin/posts/{{ id }}{% endif %}" id="post-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  {% if is_new %}
+  <label>Kind<br>
+    <select name="kind">
+      <option value="post" selected>post</option>
+      <option value="page">page</option>
+    </select>
+  </label>
+  {% else %}
+  <input type="hidden" name="kind" value="{{ kind }}">
+  {% endif %}
+  <label>Title<br>
+    <input type="text" name="title" value="{{ title }}" required>
+  </label>
+  <label>Slug (leave blank to auto-generate from the title)<br>
+    <input type="text" name="slug" value="{{ slug }}">
+  </label>
+  <label>Markdown<br>
+    <textarea name="markdown" rows="24" cols="80">{{ markdown }}</textarea>
+  </label>
+  <button type="submit">Save</button>
+</form>
+
+{% if !is_new %}
+<p class="admin-post-actions">
+  <a href="/admin/preview/{{ id }}">preview</a> ·
+  {% if status == "published" %}
+  <form class="inline-form" method="post" action="/admin/posts/{{ id }}/unpublish">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="link-button">unpublish</button>
+  </form>
+  {% else %}
+  <form class="inline-form" method="post" action="/admin/posts/{{ id }}/publish">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="link-button">publish</button>
+  </form>
+  {% endif %}
+  ·
+  <form class="inline-form" method="post" action="/admin/posts/{{ id }}/delete" onsubmit="return confirm('Delete this post?');">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="link-button">delete</button>
+  </form>
+</p>
+
+<script>
+(function () {
+  var form = document.getElementById("post-form");
+  var dirty = false;
+  form.addEventListener("input", function () { dirty = true; });
+  setInterval(function () {
+    if (!dirty) return;
+    dirty = false;
+    fetch(form.action, { method: "POST", body: new FormData(form) });
+  }, 30000);
+})();
+</script>
+{% endif %}
+{% endblock %}

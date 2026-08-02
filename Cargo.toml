@@ -14,6 +14,8 @@ clap = { version = "4", features = ["derive", "env"] }
 # async runtime + web
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "fs"] }
 axum = { version = "0.7" }
+axum-extra = { version = "0.9", features = ["cookie-private"] }
+cookie = { version = "0.18", features = ["key-expansion"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["compression-br", "compression-gzip", "trace"] }
 
@@ -36,7 +38,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # auth
 argon2 = "0.5"
 rand_core = { version = "0.6", features = ["getrandom"] }
+rand = "0.8"
 rpassword = "7"
+serde_json = "1"
+time = "0.3"
 
 # templating
 askama = "0.12"

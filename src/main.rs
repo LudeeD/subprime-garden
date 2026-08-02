@@ -1,3 +1,4 @@
+mod auth;
 mod cli;
 mod config;
 mod content;
@@ -65,18 +66,24 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     }
 
     let bind_addr = config.bind_addr()?;
+    let cookie_key = cookie::Key::derive_from(config.auth.session_secret.as_bytes());
     let state = web::AppState {
         config: std::sync::Arc::new(config),
         db: pool,
+        cookie_key,
+        login_ratelimit: std::sync::Arc::new(auth::ratelimit::RateLimiter::new()),
     };
     let app = web::build_router(state);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     tracing::info!("listening on {bind_addr}");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     Ok(())
 }
