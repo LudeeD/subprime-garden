@@ -1,0 +1,9 @@
+# Scoped (not global) so proc-macros/build-scripts, which cargo always
+# compiles for the host, aren't forced into a static-crt build too — that
+# breaks proc-macro crate types. Only used inside the Docker build; passing
+# --target explicitly is what makes cargo respect this scoping.
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=+crt-static"]

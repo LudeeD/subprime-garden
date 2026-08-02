@@ -1,0 +1,22 @@
+services:
+  garden:
+    image: ghcr.io/OWNER/subprime-garden:latest
+    restart: unless-stopped
+    ports: ["127.0.0.1:8080:8080"]
+    volumes:
+      - ./data:/data
+      - ./import:/import:ro
+    environment:
+      SUBPRIME_SERVER__BIND: "0.0.0.0:8080"
+      SUBPRIME_SERVER__DATABASE: "/data/garden.db"
+      SUBPRIME_SERVER__MEDIA_DIR: "/data/media"
+      SUBPRIME_SITE__TITLE: "subprime garden"
+      SUBPRIME_SITE__BASE_URL: "https://garden.example"
+      SUBPRIME_AUTH__USERNAME: "owner"
+      SUBPRIME_AUTH__PASSWORD_HASH: ${GARDEN_PASSWORD_HASH}
+      SUBPRIME_AUTH__SESSION_SECRET: ${GARDEN_SESSION_SECRET}
+    healthcheck:
+      test: ["CMD", "/subprime-garden", "healthcheck"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
