@@ -142,6 +142,31 @@ hr {
   border-top: 1px solid var(--border);
 }
 
+.tags {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.pagination {
+  margin-top: 2rem;
+  display: flex;
+  justify-content: space-between;
+}
+
+.archive-list {
+  list-style: none;
+  padding: 0;
+}
+
+.archive-list li {
+  padding: 0.3rem 0;
+}
+
+.archive-list time {
+  display: inline-block;
+  min-width: 9rem;
+}
+
 /* --- admin (shares everything above; kept plain on purpose) --- */
 
 .site-header nav form.inline-form {

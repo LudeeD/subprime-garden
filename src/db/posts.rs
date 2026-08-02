@@ -153,6 +153,30 @@ pub fn count_published(conn: &Connection) -> rusqlite::Result<i64> {
     )
 }
 
+/// Every published post (kind='post'), newest first, uncapped — the archive
+/// page and feeds, which don't paginate.
+pub fn list_all_published(conn: &Connection) -> rusqlite::Result<Vec<Post>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {SELECT_COLUMNS} FROM posts
+         WHERE status = 'published' AND kind = 'post'
+         ORDER BY published_at DESC"
+    ))?;
+    let rows = stmt.query_map([], Post::from_row)?;
+    rows.collect()
+}
+
+/// Every published post or page, newest first — the sitemap, which links to
+/// both.
+pub fn list_all_published_any_kind(conn: &Connection) -> rusqlite::Result<Vec<Post>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {SELECT_COLUMNS} FROM posts
+         WHERE status = 'published'
+         ORDER BY published_at DESC"
+    ))?;
+    let rows = stmt.query_map([], Post::from_row)?;
+    rows.collect()
+}
+
 pub fn count_by_status(conn: &Connection, status: PostStatus) -> rusqlite::Result<i64> {
     conn.query_row(
         "SELECT COUNT(*) FROM posts WHERE status = ?1",

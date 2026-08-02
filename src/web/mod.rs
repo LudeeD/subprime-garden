@@ -44,6 +44,13 @@ async fn style_css() -> impl axum::response::IntoResponse {
 pub fn build_router(state: AppState) -> Router {
     let public = Router::new()
         .route("/", get(public::index))
+        .route("/page/:n", get(public::index_page))
+        .route("/archive", get(public::archive))
+        .route("/tag/:slug", get(public::show_tag))
+        .route("/feed.xml", get(public::feed_atom))
+        .route("/rss.xml", get(public::feed_rss))
+        .route("/sitemap.xml", get(public::sitemap))
+        .route("/robots.txt", get(public::robots_txt))
         .route("/healthz", get(public::healthz))
         .route("/static/style.css", get(style_css))
         .route("/:slug", get(public::show_post));

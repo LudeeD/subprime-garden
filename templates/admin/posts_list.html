@@ -7,7 +7,7 @@
   <a href="/admin/posts?status=published">published</a>
 </p>
 <table class="admin-post-table">
-<thead><tr><th>Title</th><th>Status</th><th>Kind</th><th>Updated</th></tr></thead>
+<thead><tr><th>Title</th><th>Status</th><th>Kind</th><th>Updated</th><th></th></tr></thead>
 <tbody>
 {% for post in posts %}
 <tr>
@@ -15,6 +15,7 @@
   <td>{{ post.status }}</td>
   <td>{{ post.kind }}</td>
   <td>{{ post.updated_at_human }}</td>
+  <td>{% if post.status == "published" %}<a href="/{{ post.slug }}">view</a>{% endif %}</td>
 </tr>
 {% endfor %}
 </tbody>

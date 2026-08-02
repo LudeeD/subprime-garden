@@ -1,7 +1,10 @@
+pub mod feeds;
+
 use askama::Template;
 
 use crate::config::SiteConfig;
 use crate::db::models::{Media, Post};
+use crate::db::tags::Tag;
 
 /// Fields available to every template as `site`. This struct — not the raw
 /// config — is the contract: see THEMING.md for the full field/template
@@ -24,9 +27,26 @@ impl From<&SiteConfig> for SiteView {
     }
 }
 
+/// A tag as seen by templates.
+pub struct TagView {
+    pub name: String,
+    pub slug: String,
+}
+
+impl From<&Tag> for TagView {
+    fn from(t: &Tag) -> Self {
+        TagView {
+            name: t.name.clone(),
+            slug: t.slug.clone(),
+        }
+    }
+}
+
 /// A post or page as seen by templates. `published_at` is raw ISO 8601 for
 /// the `<time datetime>` attribute; `published_at_human` is pre-formatted
-/// for display so templates never need date-formatting logic.
+/// for display so templates never need date-formatting logic. `tags` is left
+/// empty in listing contexts (index, archive, tag pages) — only the post
+/// detail page fetches and attaches them, via `with_tags`.
 pub struct PostView {
     pub slug: String,
     pub title: String,
@@ -34,6 +54,7 @@ pub struct PostView {
     pub excerpt: String,
     pub published_at: String,
     pub published_at_human: String,
+    pub tags: Vec<TagView>,
 }
 
 impl From<&Post> for PostView {
@@ -45,6 +66,16 @@ impl From<&Post> for PostView {
             excerpt: p.excerpt.clone(),
             published_at: p.published_at.clone().unwrap_or_default(),
             published_at_human: humanize_date(p.published_at.as_deref()),
+            tags: Vec::new(),
+        }
+    }
+}
+
+impl PostView {
+    pub fn with_tags(post: &Post, tags: &[Tag]) -> Self {
+        PostView {
+            tags: tags.iter().map(TagView::from).collect(),
+            ..PostView::from(post)
         }
     }
 }
@@ -56,11 +87,38 @@ fn humanize_date(iso: Option<&str>) -> String {
     }
 }
 
+/// Prev/next links for a paginated listing. `page` is 1-indexed.
+pub struct PaginationView {
+    pub has_prev: bool,
+    pub has_next: bool,
+    pub prev_url: String,
+    pub next_url: String,
+}
+
+impl PaginationView {
+    pub fn new(page: u32, total_pages: u32, base_path: &str) -> Self {
+        let page_url = |n: u32| {
+            if n <= 1 {
+                base_path.to_string()
+            } else {
+                format!("{base_path}page/{n}")
+            }
+        };
+        PaginationView {
+            has_prev: page > 1,
+            has_next: page < total_pages,
+            prev_url: page_url(page.saturating_sub(1)),
+            next_url: page_url(page + 1),
+        }
+    }
+}
+
 #[derive(Template)]
 #[template(path = "index.html")]
 pub struct IndexTemplate {
     pub site: SiteView,
     pub posts: Vec<PostView>,
+    pub pagination: PaginationView,
 }
 
 #[derive(Template)]
@@ -68,6 +126,21 @@ pub struct IndexTemplate {
 pub struct PostTemplate {
     pub site: SiteView,
     pub post: PostView,
+}
+
+#[derive(Template)]
+#[template(path = "archive.html")]
+pub struct ArchiveTemplate {
+    pub site: SiteView,
+    pub posts: Vec<PostView>,
+}
+
+#[derive(Template)]
+#[template(path = "tag.html")]
+pub struct TagTemplate {
+    pub site: SiteView,
+    pub tag_name: String,
+    pub posts: Vec<PostView>,
 }
 
 /// One row in an admin post listing (dashboard recent list, /admin/posts table).
@@ -132,6 +205,8 @@ pub struct PostEditTemplate {
     pub kind: String,
     pub status: String,
     pub saved: bool,
+    /// Comma-separated tag names, pre-filled from the post's current tags.
+    pub tags: String,
 }
 
 /// One tile in the admin media grid. `markdown_snippet` is pre-built so the

@@ -1,5 +1,7 @@
 {% extends "base.html" %}
+{% block title %}Tagged “{{ tag_name }}” — {{ site.title }}{% endblock %}
 {% block content %}
+<h1>Tagged “{{ tag_name }}”</h1>
 {% for post in posts %}
 <article class="post-summary">
   <h2><a href="/{{ post.slug }}">{{ post.title }}</a></h2>
@@ -8,7 +10,6 @@
 </article>
 {% endfor %}
 {% if posts.is_empty() %}
-<p>Nothing published yet.</p>
+<p>No posts tagged “{{ tag_name }}”.</p>
 {% endif %}
-{% include "partials/pagination.html" %}
 {% endblock %}

@@ -1,14 +1,16 @@
 {% extends "base.html" %}
+{% block title %}Archive — {{ site.title }}{% endblock %}
 {% block content %}
+<h1>Archive</h1>
+<ul class="archive-list">
 {% for post in posts %}
-<article class="post-summary">
-  <h2><a href="/{{ post.slug }}">{{ post.title }}</a></h2>
+<li>
   <time datetime="{{ post.published_at }}">{{ post.published_at_human }}</time>
-  <p>{{ post.excerpt }}</p>
-</article>
+  <a href="/{{ post.slug }}">{{ post.title }}</a>
+</li>
 {% endfor %}
+</ul>
 {% if posts.is_empty() %}
 <p>Nothing published yet.</p>
 {% endif %}
-{% include "partials/pagination.html" %}
 {% endblock %}

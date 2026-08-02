@@ -58,7 +58,16 @@ struct PostForm {
     slug: String,
     markdown: String,
     kind: String,
+    /// Comma-separated tag names.
+    tags: String,
     csrf_token: String,
+}
+
+fn split_tag_names(csv: &str) -> Vec<String> {
+    csv.split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -178,6 +187,7 @@ async fn post_new_form(session: AdminSession, State(state): State<AppState>) -> 
         kind: "post".to_string(),
         status: "draft".to_string(),
         saved: false,
+        tags: String::new(),
     }
 }
 
@@ -187,9 +197,16 @@ async fn post_edit_form(
     Path(id): Path<i64>,
     Query(q): Query<SavedQuery>,
 ) -> Result<PostEditTemplate, AppError> {
-    let post = db::with_conn(&state.db, move |conn| posts::get_by_id(conn, id))
-        .await?
-        .ok_or(AppError::NotFound)?;
+    let (post, tags_csv) = db::with_conn(&state.db, move |conn| {
+        let post = posts::get_by_id(conn, id)?;
+        let tags_csv = match &post {
+            Some(_) => crate::db::tags::names_csv_for_post(conn, id)?,
+            None => String::new(),
+        };
+        Ok((post, tags_csv))
+    })
+    .await?;
+    let post = post.ok_or(AppError::NotFound)?;
 
     Ok(PostEditTemplate {
         site: SiteView::from(&state.config.site),
@@ -202,6 +219,7 @@ async fn post_edit_form(
         kind: post.kind.as_str().to_string(),
         status: post.status.as_str().to_string(),
         saved: q.saved.unwrap_or(false),
+        tags: tags_csv,
     })
 }
 
@@ -220,6 +238,7 @@ async fn post_create(
     let markdown_cfg = state.config.markdown.clone();
     let markdown_src = form.markdown;
     let requested_slug = form.slug.trim().to_string();
+    let tag_names = split_tag_names(&form.tags);
 
     let id = db::with_conn(&state.db, move |conn| {
         let slug_source = if requested_slug.is_empty() {
@@ -241,7 +260,10 @@ async fn post_create(
             status: PostStatus::Draft,
             kind,
         };
-        posts::insert(conn, &new)
+        let id = posts::insert(conn, &new)?;
+        let tag_ids = crate::db::tags::find_or_create(conn, &tag_names)?;
+        crate::db::tags::set_post_tags(conn, id, &tag_ids)?;
+        Ok(id)
     })
     .await?;
 
@@ -263,6 +285,7 @@ async fn post_update(
     let markdown_cfg = state.config.markdown.clone();
     let markdown_src = form.markdown;
     let requested_slug = form.slug.trim().to_string();
+    let tag_names = split_tag_names(&form.tags);
 
     db::with_conn(&state.db, move |conn| {
         let slug_source = if requested_slug.is_empty() {
@@ -282,7 +305,9 @@ async fn post_update(
             excerpt: rendered.excerpt,
             content_hash: rendered.content_hash,
         };
-        posts::update_content(conn, id, &edit)
+        posts::update_content(conn, id, &edit)?;
+        let tag_ids = crate::db::tags::find_or_create(conn, &tag_names)?;
+        crate::db::tags::set_post_tags(conn, id, &tag_ids)
     })
     .await?;
 
@@ -333,13 +358,20 @@ async fn post_preview(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<PostTemplate, AppError> {
-    let post = db::with_conn(&state.db, move |conn| posts::get_by_id(conn, id))
-        .await?
-        .ok_or(AppError::NotFound)?;
+    let (post, post_tags) = db::with_conn(&state.db, move |conn| {
+        let post = posts::get_by_id(conn, id)?;
+        let tags = match &post {
+            Some(_) => crate::db::tags::for_post(conn, id)?,
+            None => Vec::new(),
+        };
+        Ok((post, tags))
+    })
+    .await?;
+    let post = post.ok_or(AppError::NotFound)?;
 
     Ok(PostTemplate {
         site: SiteView::from(&state.config.site),
-        post: crate::render::PostView::from(&post),
+        post: crate::render::PostView::with_tags(&post, &post_tags),
     })
 }
 
