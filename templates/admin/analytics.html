@@ -1,0 +1,49 @@
+{% extends "admin/base.html" %}
+{% block title %}Analytics — {{ site.title }}{% endblock %}
+{% block content %}
+<h1>Analytics</h1>
+<p>{{ total_views }} views all-time. {{ feed_hits }} feed reads since restart.</p>
+
+<div class="analytics-grid">
+  <section>
+    <h2>Last 7 days</h2>
+    {{ sparkline_7d|safe }}
+    <p>{{ views_7d }} views · {{ uniques_7d }} uniques</p>
+  </section>
+  <section>
+    <h2>Last 30 days</h2>
+    {{ sparkline_30d|safe }}
+    <p>{{ views_30d }} views · {{ uniques_30d }} uniques</p>
+  </section>
+  <section>
+    <h2>Last 90 days</h2>
+    {{ sparkline_90d|safe }}
+    <p>{{ views_90d }} views · {{ uniques_90d }} uniques</p>
+  </section>
+</div>
+
+<div class="analytics-grid">
+  <section>
+    <h2>Top posts (30d)</h2>
+    <ol class="admin-post-list">
+    {% for row in top_posts %}
+      <li>{{ row.label }} <span class="post-meta">{{ row.count }}</span></li>
+    {% endfor %}
+    {% if top_posts.is_empty() %}<li>No data yet.</li>{% endif %}
+    </ol>
+  </section>
+  <section>
+    <h2>Top referrers</h2>
+    <ol class="admin-post-list">
+    {% for row in top_referrers %}
+      <li>{{ row.label }} <span class="post-meta">{{ row.count }}</span></li>
+    {% endfor %}
+    {% if top_referrers.is_empty() %}<li>No data yet.</li>{% endif %}
+    </ol>
+  </section>
+</div>
+
+{% if dropped_events > 0 %}
+<p class="post-meta">{{ dropped_events }} pageview(s) dropped (analytics write buffer was full).</p>
+{% endif %}
+{% endblock %}

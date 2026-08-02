@@ -1,4 +1,5 @@
 pub mod admin;
+mod middleware;
 pub mod net;
 pub mod public;
 
@@ -14,6 +15,7 @@ use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::trace::TraceLayer;
 
+use crate::analytics::AnalyticsHandle;
 use crate::auth::ratelimit::RateLimiter;
 use crate::config::Config;
 use crate::db::Pool;
@@ -24,6 +26,7 @@ pub struct AppState {
     pub db: Pool,
     pub cookie_key: Key,
     pub login_ratelimit: Arc<RateLimiter>,
+    pub analytics: Arc<AnalyticsHandle>,
 }
 
 impl FromRef<AppState> for Key {
@@ -67,6 +70,10 @@ pub fn build_router(state: AppState) -> Router {
         .merge(public)
         .merge(media)
         .nest("/admin", admin::router())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::track_pageview,
+        ))
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())
         .with_state(state)

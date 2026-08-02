@@ -1,3 +1,4 @@
+pub mod analytics;
 pub mod media;
 mod migrations;
 pub mod models;
@@ -68,6 +69,22 @@ where
     tokio::task::spawn_blocking(move || {
         let conn = pool.get()?;
         Ok::<T, DbError>(f(&conn)?)
+    })
+    .await
+    .expect("db worker thread panicked")
+}
+
+/// Like `with_conn`, but hands back a mutable connection for callers that
+/// need a transaction (batch inserts, the nightly rollup).
+pub async fn with_conn_mut<F, T>(pool: &Pool, f: F) -> Result<T, DbError>
+where
+    F: FnOnce(&mut rusqlite::Connection) -> rusqlite::Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    let pool = pool.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get()?;
+        Ok::<T, DbError>(f(&mut conn)?)
     })
     .await
     .expect("db worker thread panicked")

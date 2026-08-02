@@ -1,4 +1,5 @@
 pub mod feeds;
+pub mod sparkline;
 
 use askama::Template;
 
@@ -182,6 +183,8 @@ pub struct DashboardTemplate {
     pub recent_posts: Vec<AdminPostRow>,
     pub published_count: i64,
     pub draft_count: i64,
+    pub views_7d: i64,
+    pub uniques_7d: i64,
 }
 
 #[derive(Template)]
@@ -239,4 +242,31 @@ pub struct MediaGridTemplate {
     pub site: SiteView,
     pub csrf_token: String,
     pub items: Vec<AdminMediaRow>,
+}
+
+/// A labeled count — top posts by path, top referrers by host.
+pub struct CountRow {
+    pub label: String,
+    pub count: i64,
+}
+
+#[derive(Template)]
+#[template(path = "admin/analytics.html")]
+pub struct AnalyticsTemplate {
+    pub site: SiteView,
+    pub csrf_token: String,
+    pub total_views: i64,
+    pub views_7d: i64,
+    pub uniques_7d: i64,
+    pub sparkline_7d: String,
+    pub views_30d: i64,
+    pub uniques_30d: i64,
+    pub sparkline_30d: String,
+    pub views_90d: i64,
+    pub uniques_90d: i64,
+    pub sparkline_90d: String,
+    pub top_posts: Vec<CountRow>,
+    pub top_referrers: Vec<CountRow>,
+    pub dropped_events: u64,
+    pub feed_hits: u64,
 }

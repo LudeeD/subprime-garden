@@ -1,3 +1,4 @@
+mod analytics;
 mod auth;
 mod cli;
 mod config;
@@ -68,11 +69,14 @@ async fn serve(config: Config) -> anyhow::Result<()> {
 
     let bind_addr = config.bind_addr()?;
     let cookie_key = cookie::Key::derive_from(config.auth.session_secret.as_bytes());
+    let (analytics_handle, analytics_writer) =
+        analytics::AnalyticsHandle::spawn(pool.clone(), &config.analytics).await?;
     let state = web::AppState {
         config: std::sync::Arc::new(config),
         db: pool,
         cookie_key,
         login_ratelimit: std::sync::Arc::new(auth::ratelimit::RateLimiter::new()),
+        analytics: std::sync::Arc::new(analytics_handle),
     };
     let app = web::build_router(state);
 
@@ -85,6 +89,12 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     )
     .with_graceful_shutdown(shutdown_signal())
     .await?;
+
+    // `app` (and every clone of AppState handed to in-flight requests) is
+    // dropped by this point, so the analytics channel's sender side is gone
+    // too — awaiting the writer here is what lets it flush its last batch
+    // before the process exits.
+    analytics_writer.await.ok();
 
     Ok(())
 }

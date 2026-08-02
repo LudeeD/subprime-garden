@@ -290,3 +290,16 @@ form button[type="submit"] {
   font-size: 0.85rem;
   margin-top: 0.4rem;
 }
+
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 1.5rem;
+  margin: 1.5rem 0;
+}
+
+.sparkline {
+  color: var(--link);
+  width: 100%;
+  height: auto;
+}

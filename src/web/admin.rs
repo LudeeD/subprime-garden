@@ -16,8 +16,8 @@ use crate::db::{self, media, posts};
 use crate::error::AppError;
 use crate::media_store;
 use crate::render::{
-    AdminMediaRow, AdminPostRow, DashboardTemplate, LoginTemplate, MediaGridTemplate,
-    PostEditTemplate, PostTemplate, PostsListTemplate, SiteView,
+    AdminMediaRow, AdminPostRow, AnalyticsTemplate, DashboardTemplate, LoginTemplate,
+    MediaGridTemplate, PostEditTemplate, PostTemplate, PostsListTemplate, SiteView,
 };
 
 use super::{net, AppState};
@@ -38,6 +38,7 @@ pub fn router() -> Router<AppState> {
         .route("/media", get(media_grid))
         .route("/media/upload", post(media_upload))
         .route("/media/:id/delete", post(media_delete))
+        .route("/analytics", get(admin_analytics))
 }
 
 #[derive(Deserialize)]
@@ -143,11 +144,12 @@ async fn dashboard(
     session: AdminSession,
     State(state): State<AppState>,
 ) -> Result<DashboardTemplate, AppError> {
-    let (recent, published_count, draft_count) = db::with_conn(&state.db, |conn| {
+    let (recent, published_count, draft_count, week) = db::with_conn(&state.db, |conn| {
         let recent: Vec<Post> = posts::list_all(conn, None)?.into_iter().take(10).collect();
         let published_count = posts::count_by_status(conn, PostStatus::Published)?;
         let draft_count = posts::count_by_status(conn, PostStatus::Draft)?;
-        Ok((recent, published_count, draft_count))
+        let week = crate::db::analytics::daily_series(conn, 7)?;
+        Ok((recent, published_count, draft_count, week))
     })
     .await?;
 
@@ -157,6 +159,54 @@ async fn dashboard(
         recent_posts: recent.iter().map(AdminPostRow::from).collect(),
         published_count,
         draft_count,
+        views_7d: week.iter().map(|d| d.views).sum(),
+        uniques_7d: week.iter().map(|d| d.uniques).sum(),
+    })
+}
+
+async fn admin_analytics(
+    session: AdminSession,
+    State(state): State<AppState>,
+) -> Result<AnalyticsTemplate, AppError> {
+    let (series7, series30, series90, top_posts, top_referrers, total_views) =
+        db::with_conn(&state.db, |conn| {
+            let series7 = crate::db::analytics::daily_series(conn, 7)?;
+            let series30 = crate::db::analytics::daily_series(conn, 30)?;
+            let series90 = crate::db::analytics::daily_series(conn, 90)?;
+            let top_posts = crate::db::analytics::top_posts(conn, 30)?;
+            let top_referrers = crate::db::analytics::top_referrers(conn)?;
+            let total_views = crate::db::analytics::total_views(conn)?;
+            Ok((series7, series30, series90, top_posts, top_referrers, total_views))
+        })
+        .await?;
+
+    let sum_views = |s: &[crate::db::analytics::DayStat]| s.iter().map(|d| d.views).sum::<i64>();
+    let sum_uniques = |s: &[crate::db::analytics::DayStat]| s.iter().map(|d| d.uniques).sum::<i64>();
+    let views_series = |s: &[crate::db::analytics::DayStat]| s.iter().map(|d| d.views).collect::<Vec<_>>();
+
+    Ok(AnalyticsTemplate {
+        site: SiteView::from(&state.config.site),
+        csrf_token: session.csrf,
+        total_views,
+        views_7d: sum_views(&series7),
+        uniques_7d: sum_uniques(&series7),
+        sparkline_7d: crate::render::sparkline::sparkline_svg(&views_series(&series7), 300, 60),
+        views_30d: sum_views(&series30),
+        uniques_30d: sum_uniques(&series30),
+        sparkline_30d: crate::render::sparkline::sparkline_svg(&views_series(&series30), 300, 60),
+        views_90d: sum_views(&series90),
+        uniques_90d: sum_uniques(&series90),
+        sparkline_90d: crate::render::sparkline::sparkline_svg(&views_series(&series90), 300, 60),
+        top_posts: top_posts
+            .into_iter()
+            .map(|p| crate::render::CountRow { label: p.path, count: p.views })
+            .collect(),
+        top_referrers: top_referrers
+            .into_iter()
+            .map(|r| crate::render::CountRow { label: r.path, count: r.views })
+            .collect(),
+        dropped_events: state.analytics.dropped_count(),
+        feed_hits: state.analytics.feed_hits_count(),
     })
 }
 

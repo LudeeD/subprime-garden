@@ -99,6 +99,7 @@ pub async fn show_tag(
 pub async fn feed_atom(State(state): State<AppState>) -> Result<impl IntoResponse, AppError> {
     let posts = db::with_conn(&state.db, |conn| posts::list_published(conn, 20, 0)).await?;
     let xml = feeds::atom_feed(&SiteView::from(&state.config.site), &posts);
+    state.analytics.record_feed_hit();
     Ok((
         [(header::CONTENT_TYPE, "application/atom+xml; charset=utf-8")],
         xml,
@@ -108,6 +109,7 @@ pub async fn feed_atom(State(state): State<AppState>) -> Result<impl IntoRespons
 pub async fn feed_rss(State(state): State<AppState>) -> Result<impl IntoResponse, AppError> {
     let posts = db::with_conn(&state.db, |conn| posts::list_published(conn, 20, 0)).await?;
     let xml = feeds::rss_feed(&SiteView::from(&state.config.site), &posts);
+    state.analytics.record_feed_hit();
     Ok((
         [(header::CONTENT_TYPE, "application/rss+xml; charset=utf-8")],
         xml,
