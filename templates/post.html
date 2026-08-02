@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ post.title }} — {{ site.title }}{% endblock %}
+{% block content %}
+<article class="post">
+  <h1>{{ post.title }}</h1>
+  {% if !post.published_at_human.is_empty() %}
+  <time datetime="{{ post.published_at }}">{{ post.published_at_human }}</time>
+  {% endif %}
+  <div class="post-body">{{ post.html|safe }}</div>
+</article>
+{% endblock %}

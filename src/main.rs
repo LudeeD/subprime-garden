@@ -1,7 +1,9 @@
 mod cli;
 mod config;
+mod content;
 mod db;
 mod error;
+mod render;
 mod web;
 
 use clap::Parser;

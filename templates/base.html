@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{{ site.title }}{% endblock %}</title>
+<meta name="description" content="{{ site.description }}">
+<link rel="stylesheet" href="/static/style.css">
+<link rel="alternate" type="application/atom+xml" title="{{ site.title }}" href="/feed.xml">
+</head>
+<body>
+<header class="site-header">
+  <a class="site-title" href="/">{{ site.title }}</a>
+  <nav>
+    <a href="/archive">archive</a>
+  </nav>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+<footer class="site-footer">
+  <p>{{ site.author }}</p>
+</footer>
+</body>
+</html>

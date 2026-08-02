@@ -10,6 +10,8 @@ pub enum AppError {
     #[error(transparent)]
     Pool(#[from] r2d2::Error),
     #[error(transparent)]
+    DbLayer(#[from] crate::db::DbError),
+    #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
 

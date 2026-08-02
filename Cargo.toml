@@ -38,6 +38,17 @@ argon2 = "0.5"
 rand_core = { version = "0.6", features = ["getrandom"] }
 rpassword = "7"
 
+# templating
+askama = "0.12"
+askama_axum = "0.4"
+
+# content
+pulldown-cmark = "0.12"
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+slug = "0.1"
+blake3 = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
 [profile.release]
 opt-level = 3
 lto = true

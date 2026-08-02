@@ -1,4 +1,6 @@
 mod migrations;
+pub mod models;
+pub mod posts;
 
 pub use migrations::run_migrations;
 
@@ -50,4 +52,21 @@ pub fn open_pool(path: &Path) -> Result<Pool, DbError> {
         .min_idle(Some(1))
         .build(manager)?;
     Ok(pool)
+}
+
+/// Runs `f` against a pooled connection on a blocking-safe thread. Handlers
+/// use this instead of calling rusqlite directly so a slow query never stalls
+/// a tokio worker thread.
+pub async fn with_conn<F, T>(pool: &Pool, f: F) -> Result<T, DbError>
+where
+    F: FnOnce(&rusqlite::Connection) -> rusqlite::Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    let pool = pool.clone();
+    tokio::task::spawn_blocking(move || {
+        let conn = pool.get()?;
+        Ok::<T, DbError>(f(&conn)?)
+    })
+    .await
+    .expect("db worker thread panicked")
 }
