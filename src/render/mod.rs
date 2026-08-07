@@ -2,15 +2,61 @@ pub mod cache;
 pub mod feeds;
 pub mod sparkline;
 
-use askama::Template;
+use serde::Serialize;
 
 use crate::config::SiteConfig;
 use crate::db::models::{Media, Post};
 use crate::db::tags::Tag;
+use crate::error::AppError;
 
-/// Fields available to every template as `site`. This struct — not the raw
-/// config — is the contract: see THEMING.md for the full field/template
-/// reference used when forking the theme.
+pub trait TemplateCtx: Serialize {
+    const NAME: &'static str;
+}
+
+pub fn build_env() -> anyhow::Result<minijinja::Environment<'static>> {
+    let mut env = minijinja::Environment::new();
+    let root = std::path::Path::new("./templates");
+
+    for entry in walkdir::WalkDir::new(root) {
+        let entry = entry?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("html") {
+            continue;
+        }
+        let name = path
+            .strip_prefix(root)?
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/");
+        let source = std::fs::read_to_string(path)?;
+        env.add_template_owned(name, source)?;
+    }
+
+    Ok(env)
+}
+
+/// Renders `ctx` with the template named by `T::NAME`.
+pub fn render<T: TemplateCtx>(env: &minijinja::Environment, ctx: &T) -> Result<String, AppError> {
+    env.get_template(T::NAME)
+        .and_then(|t| t.render(ctx))
+        .map_err(|e| anyhow::anyhow!("template render error: {e}").into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stock_templates_parse() {
+        build_env().expect("every template under ./templates should parse");
+    }
+}
+
+#[derive(Serialize)]
 pub struct SiteView {
     pub title: String,
     pub description: String,
@@ -30,6 +76,7 @@ impl From<&SiteConfig> for SiteView {
 }
 
 /// A tag as seen by templates.
+#[derive(Serialize)]
 pub struct TagView {
     pub name: String,
     pub slug: String,
@@ -49,6 +96,7 @@ impl From<&Tag> for TagView {
 /// for display so templates never need date-formatting logic. `tags` is left
 /// empty in listing contexts (index, archive, tag pages) — only the post
 /// detail page fetches and attaches them, via `with_tags`.
+#[derive(Serialize)]
 pub struct PostView {
     pub slug: String,
     pub title: String,
@@ -89,7 +137,18 @@ fn humanize_date(iso: Option<&str>) -> String {
     }
 }
 
+/// Formats a stored ISO 8601 timestamp for an HTML `datetime-local` input's
+/// `value` (`YYYY-MM-DDTHH:MM`, no seconds/offset). Empty/unparseable input
+/// yields an empty string, which the input just treats as unset.
+pub fn datetime_local(iso: Option<&str>) -> String {
+    match iso.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()) {
+        Some(dt) => dt.format("%Y-%m-%dT%H:%M").to_string(),
+        None => String::new(),
+    }
+}
+
 /// Prev/next links for a paginated listing. `page` is 1-indexed.
+#[derive(Serialize)]
 pub struct PaginationView {
     pub has_prev: bool,
     pub has_next: bool,
@@ -115,37 +174,72 @@ impl PaginationView {
     }
 }
 
-#[derive(Template)]
-#[template(path = "index.html")]
+#[derive(Serialize)]
 pub struct IndexTemplate {
     pub site: SiteView,
     pub posts: Vec<PostView>,
     pub pagination: PaginationView,
 }
+impl TemplateCtx for IndexTemplate {
+    const NAME: &'static str = "index.html";
+}
 
-#[derive(Template)]
-#[template(path = "post.html")]
+#[derive(Serialize)]
 pub struct PostTemplate {
     pub site: SiteView,
     pub post: PostView,
 }
+impl TemplateCtx for PostTemplate {
+    const NAME: &'static str = "post.html";
+}
 
-#[derive(Template)]
-#[template(path = "archive.html")]
+#[derive(Serialize)]
 pub struct ArchiveTemplate {
     pub site: SiteView,
     pub posts: Vec<PostView>,
 }
+impl TemplateCtx for ArchiveTemplate {
+    const NAME: &'static str = "archive.html";
+}
 
-#[derive(Template)]
-#[template(path = "tag.html")]
+#[derive(Serialize)]
 pub struct TagTemplate {
     pub site: SiteView,
     pub tag_name: String,
     pub posts: Vec<PostView>,
 }
+impl TemplateCtx for TagTemplate {
+    const NAME: &'static str = "tag.html";
+}
+
+#[derive(Serialize)]
+pub struct TagCountView {
+    pub name: String,
+    pub slug: String,
+    pub count: i64,
+}
+
+impl From<&crate::db::tags::TagCount> for TagCountView {
+    fn from(t: &crate::db::tags::TagCount) -> Self {
+        TagCountView {
+            name: t.name.clone(),
+            slug: t.slug.clone(),
+            count: t.count,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct TagsTemplate {
+    pub site: SiteView,
+    pub tags: Vec<TagCountView>,
+}
+impl TemplateCtx for TagsTemplate {
+    const NAME: &'static str = "tags.html";
+}
 
 /// One row in an admin post listing (dashboard recent list, /admin/posts table).
+#[derive(Serialize)]
 pub struct AdminPostRow {
     pub id: i64,
     pub slug: String,
@@ -168,16 +262,17 @@ impl From<&Post> for AdminPostRow {
     }
 }
 
-#[derive(Template)]
-#[template(path = "admin/login.html")]
+#[derive(Serialize)]
 pub struct LoginTemplate {
     pub site: SiteView,
     pub csrf_token: String,
     pub error: Option<String>,
 }
+impl TemplateCtx for LoginTemplate {
+    const NAME: &'static str = "admin/login.html";
+}
 
-#[derive(Template)]
-#[template(path = "admin/dashboard.html")]
+#[derive(Serialize)]
 pub struct DashboardTemplate {
     pub site: SiteView,
     pub csrf_token: String,
@@ -187,17 +282,21 @@ pub struct DashboardTemplate {
     pub views_7d: i64,
     pub uniques_7d: i64,
 }
+impl TemplateCtx for DashboardTemplate {
+    const NAME: &'static str = "admin/dashboard.html";
+}
 
-#[derive(Template)]
-#[template(path = "admin/posts_list.html")]
+#[derive(Serialize)]
 pub struct PostsListTemplate {
     pub site: SiteView,
     pub csrf_token: String,
     pub posts: Vec<AdminPostRow>,
 }
+impl TemplateCtx for PostsListTemplate {
+    const NAME: &'static str = "admin/posts_list.html";
+}
 
-#[derive(Template)]
-#[template(path = "admin/post_edit.html")]
+#[derive(Serialize)]
 pub struct PostEditTemplate {
     pub site: SiteView,
     pub csrf_token: String,
@@ -211,10 +310,18 @@ pub struct PostEditTemplate {
     pub saved: bool,
     /// Comma-separated tag names, pre-filled from the post's current tags.
     pub tags: String,
+    /// `datetime-local` input value — see `datetime_local`.
+    pub created_at: String,
+    /// `datetime-local` input value; empty when unpublished.
+    pub published_at: String,
+}
+impl TemplateCtx for PostEditTemplate {
+    const NAME: &'static str = "admin/post_edit.html";
 }
 
 /// One tile in the admin media grid. `markdown_snippet` is pre-built so the
 /// "copy markdown" button just copies a string — no client-side templating.
+#[derive(Serialize)]
 pub struct AdminMediaRow {
     pub id: i64,
     pub filename: String,
@@ -237,22 +344,24 @@ impl From<&Media> for AdminMediaRow {
     }
 }
 
-#[derive(Template)]
-#[template(path = "admin/media.html")]
+#[derive(Serialize)]
 pub struct MediaGridTemplate {
     pub site: SiteView,
     pub csrf_token: String,
     pub items: Vec<AdminMediaRow>,
 }
+impl TemplateCtx for MediaGridTemplate {
+    const NAME: &'static str = "admin/media.html";
+}
 
 /// A labeled count — top posts by path, top referrers by host.
+#[derive(Serialize)]
 pub struct CountRow {
     pub label: String,
     pub count: i64,
 }
 
-#[derive(Template)]
-#[template(path = "admin/analytics.html")]
+#[derive(Serialize)]
 pub struct AnalyticsTemplate {
     pub site: SiteView,
     pub csrf_token: String,
@@ -270,4 +379,7 @@ pub struct AnalyticsTemplate {
     pub top_referrers: Vec<CountRow>,
     pub dropped_events: u64,
     pub feed_hits: u64,
+}
+impl TemplateCtx for AnalyticsTemplate {
+    const NAME: &'static str = "admin/analytics.html";
 }

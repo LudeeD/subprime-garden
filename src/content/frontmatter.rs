@@ -69,9 +69,8 @@ pub fn parse(content: &str) -> ParsedFile {
     if let Some(rest) = strip_bom(content).strip_prefix("+++") {
         if let Some(rest) = rest.strip_prefix("\r\n").or_else(|| rest.strip_prefix('\n')) {
             if let Some((block, body)) = split_at_delimiter_line(rest, "+++") {
-                let raw: RawFrontmatter = toml::from_str(block).unwrap_or_default();
                 return ParsedFile {
-                    frontmatter: raw.into(),
+                    frontmatter: parse_toml(block).into(),
                     body: body.to_string(),
                 };
             }
@@ -81,6 +80,23 @@ pub fn parse(content: &str) -> ParsedFile {
         frontmatter: Frontmatter::default(),
         body: content.to_string(),
     }
+}
+
+/// Zola/Hugo write `date` as TOML's native date type (`date = 2024-01-01`,
+/// no quotes), which `RawFrontmatter.date: Option<String>` can't deserialize
+/// directly — that mismatch used to fail the *whole* struct, silently
+/// dropping title/tags/everything, not just the date. Stringify it first.
+fn parse_toml(block: &str) -> RawFrontmatter {
+    let Ok(mut value) = toml::from_str::<toml::Value>(block) else {
+        return RawFrontmatter::default();
+    };
+    if let toml::Value::Table(table) = &mut value {
+        if let Some(toml::Value::Datetime(dt)) = table.get("date") {
+            let s = dt.to_string();
+            table.insert("date".to_string(), toml::Value::String(s));
+        }
+    }
+    value.try_into().unwrap_or_default()
 }
 
 fn strip_bom(s: &str) -> &str {
@@ -163,6 +179,19 @@ mod tests {
         assert_eq!(parsed.frontmatter.tags, vec!["a", "b"]);
         assert_eq!(parsed.frontmatter.draft, Some(true));
         assert_eq!(parsed.body.trim(), "Body text.");
+    }
+
+    #[test]
+    fn toml_bare_date_does_not_wipe_the_rest_of_the_frontmatter() {
+        let input = "+++\ntitle = \"Hi\"\ndate = 2024-01-01\n[taxonomies]\ntags = [\"x\"]\n+++\nBody.\n";
+        let parsed = parse(input);
+        assert_eq!(parsed.frontmatter.title.as_deref(), Some("Hi"));
+        assert_eq!(parsed.frontmatter.date.as_deref(), Some("2024-01-01"));
+        assert_eq!(parsed.frontmatter.tags, vec!["x"]);
+        assert_eq!(
+            resolve_date(parsed.frontmatter.date.as_deref(), std::time::SystemTime::UNIX_EPOCH),
+            "2024-01-01T00:00:00.000Z"
+        );
     }
 
     #[test]

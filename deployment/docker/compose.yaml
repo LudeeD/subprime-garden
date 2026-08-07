@@ -1,0 +1,25 @@
+# Run from this directory (deployment/docker) — data/, import/, templates/,
+# static/, and garden.toml all live alongside this file:
+#   mkdir -p data import templates static && touch garden.toml
+#   docker compose run --rm garden init
+#   docker compose up -d
+# (container is UID 1000, non-root — see README's Quickstart)
+services:
+  garden:
+    image: ghcr.io/OWNER/subprime-garden:latest
+    restart: unless-stopped
+    ports: ["127.0.0.1:8080:8080"]
+    volumes:
+      - ./data:/data
+      - ./import:/import:ro
+      - ./templates:/templates
+      - ./static:/static
+      - ./garden.toml:/garden.toml
+    environment:
+      SUBPRIME_CONFIG: /garden.toml
+      SUBPRIME_SERVER__BIND: "0.0.0.0:8080"
+    healthcheck:
+      test: ["CMD", "/subprime-garden", "healthcheck"]
+      interval: 30s
+      timeout: 3s
+      retries: 3

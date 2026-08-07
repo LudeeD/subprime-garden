@@ -139,8 +139,8 @@ pub enum ConfigError {
     Load(#[from] figment::Error),
     #[error(
         "auth.password_hash does not look like an argon2 hash (expected it to start with \
-         `$argon2`). Run `subprime-garden hash-password` and paste the result, don't put a \
-         plaintext password in config."
+         `$argon2`). Run `subprime-garden init` to set it, don't put a plaintext password in \
+         config."
     )]
     PlaintextPassword,
     #[error("auth.username is empty — set [auth] username in the config or SUBPRIME_AUTH__USERNAME")]

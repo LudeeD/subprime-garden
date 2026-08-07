@@ -20,7 +20,7 @@
 {% endfor %}
 </tbody>
 </table>
-{% if posts.is_empty() %}
+{% if not posts %}
 <p>No posts.</p>
 {% endif %}
 {% endblock %}

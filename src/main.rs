@@ -22,29 +22,33 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
+    let config_path = cli.config_path();
 
     match cli.command {
-        Command::HashPassword => {
-            cli::hash_password::run()?;
-        }
         Command::Serve => {
-            let config = Config::load(cli.config.as_ref())?;
+            let config = Config::load(config_path.as_ref())?;
             config.warn_if_loopback_in_container();
             serve(config).await?;
         }
+        Command::Init { dir, force, reset_password } => {
+            cli::init::run(&dir, force, reset_password)?;
+        }
+        Command::Theme { dir, force } => {
+            cli::init::theme(&dir, force)?;
+        }
         Command::Migrate => {
-            let config = Config::load(cli.config.as_ref())?;
+            let config = Config::load(config_path.as_ref())?;
             let pool = db::open_pool(&config.server.database)?;
             let mut conn = pool.get()?;
             db::run_migrations(&mut conn)?;
             println!("migrations applied");
         }
         Command::Healthcheck => {
-            let config = Config::load(cli.config.as_ref())?;
+            let config = Config::load(config_path.as_ref())?;
             cli::healthcheck::run(&config)?;
         }
         Command::Import { dir, published, force, dry_run } => {
-            let config = Config::load(cli.config.as_ref())?;
+            let config = Config::load(config_path.as_ref())?;
             let pool = db::open_pool(&config.server.database)?;
             let mut conn = pool.get()?;
             db::run_migrations(&mut conn)?;
@@ -52,14 +56,14 @@ async fn main() -> anyhow::Result<()> {
             cli::import::run(&mut conn, &dir, &opts, &config.markdown)?;
         }
         Command::Export { dir } => {
-            let config = Config::load(cli.config.as_ref())?;
+            let config = Config::load(config_path.as_ref())?;
             let pool = db::open_pool(&config.server.database)?;
             let mut conn = pool.get()?;
             db::run_migrations(&mut conn)?;
             cli::export::run(&conn, &dir)?;
         }
         Command::Rerender => {
-            let config = Config::load(cli.config.as_ref())?;
+            let config = Config::load(config_path.as_ref())?;
             let pool = db::open_pool(&config.server.database)?;
             let mut conn = pool.get()?;
             db::run_migrations(&mut conn)?;
@@ -81,6 +85,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     let cookie_key = cookie::Key::derive_from(config.auth.session_secret.as_bytes());
     let (analytics_handle, analytics_writer) =
         analytics::AnalyticsHandle::spawn(pool.clone(), &config.analytics).await?;
+    let templates = std::sync::Arc::new(render::build_env()?);
     let state = web::AppState {
         config: std::sync::Arc::new(config),
         db: pool,
@@ -88,6 +93,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         login_ratelimit: std::sync::Arc::new(auth::ratelimit::RateLimiter::new()),
         analytics: std::sync::Arc::new(analytics_handle),
         page_cache: std::sync::Arc::new(render::cache::PageCache::new()),
+        templates,
     };
     web::public::warm_cache(&state).await;
     let app = web::build_router(state);

@@ -107,6 +107,33 @@ pub fn names_csv_for_post(conn: &Connection, post_id: i64) -> rusqlite::Result<S
         .join(", "))
 }
 
+pub struct TagCount {
+    pub name: String,
+    pub slug: String,
+    pub count: i64,
+}
+
+/// Every tag with at least one published post, most-used first.
+pub fn list_all_with_counts(conn: &Connection) -> rusqlite::Result<Vec<TagCount>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.name, t.slug, COUNT(*) as cnt
+         FROM tags t
+         JOIN post_tags pt ON pt.tag_id = t.id
+         JOIN posts p ON p.id = pt.post_id
+         WHERE p.status = 'published' AND p.kind = 'post'
+         GROUP BY t.id
+         ORDER BY cnt DESC, t.name",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(TagCount {
+            name: row.get(0)?,
+            slug: row.get(1)?,
+            count: row.get(2)?,
+        })
+    })?;
+    rows.collect()
+}
+
 pub fn get_by_slug(conn: &Connection, slug: &str) -> rusqlite::Result<Option<Tag>> {
     conn.query_row(
         "SELECT id, name, slug FROM tags WHERE slug = ?1",

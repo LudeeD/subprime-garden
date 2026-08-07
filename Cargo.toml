@@ -44,8 +44,13 @@ serde_json = "1"
 time = "0.3"
 
 # templating
-askama = "0.12"
-askama_axum = "0.4"
+minijinja = "2"
+
+# `init` scaffolding — embeds templates/, static/, garden.toml.example into
+# the binary at release-build time only (dev builds read from disk), so
+# `subprime-garden init` can seed a fresh deployment without needing the
+# git repo checked out.
+rust-embed = "8"
 
 # content
 pulldown-cmark = "0.12"
@@ -56,6 +61,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 serde_yaml = "0.9"
 toml = "0.8"
+# format-preserving edits to garden.toml, used by `init`
+toml_edit = "0.22"
 walkdir = "2"
 
 [profile.release]

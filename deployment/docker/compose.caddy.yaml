@@ -1,6 +1,13 @@
-# Same as compose.yaml, plus a Caddy sidecar for automatic HTTPS. Point
-# SUBPRIME_DOMAIN (in .env) at your server's DNS and Caddy gets a
-# Let's Encrypt certificate on first boot — nothing else to configure.
+# Same as compose.yaml, plus a Caddy sidecar for automatic HTTPS. Copy
+# .env.example to .env (in this directory) and point SUBPRIME_DOMAIN at
+# your server's DNS — Caddy gets a Let's Encrypt certificate on first boot,
+# nothing else to configure.
+#
+# Run from this directory (deployment/docker) — data/, import/, templates/,
+# static/, and garden.toml all live alongside this file:
+#   mkdir -p data import templates static && touch garden.toml
+#   docker compose -f compose.caddy.yaml run --rm garden init
+#   docker compose -f compose.caddy.yaml up -d
 services:
   garden:
     image: ghcr.io/OWNER/subprime-garden:latest
@@ -9,15 +16,13 @@ services:
     volumes:
       - ./data:/data
       - ./import:/import:ro
+      - ./templates:/templates
+      - ./static:/static
+      - ./garden.toml:/garden.toml
     environment:
+      SUBPRIME_CONFIG: /garden.toml
       SUBPRIME_SERVER__BIND: "0.0.0.0:8080"
-      SUBPRIME_SERVER__DATABASE: "/data/garden.db"
-      SUBPRIME_SERVER__MEDIA_DIR: "/data/media"
-      SUBPRIME_SITE__TITLE: "subprime garden"
       SUBPRIME_SITE__BASE_URL: "https://${SUBPRIME_DOMAIN}"
-      SUBPRIME_AUTH__USERNAME: "owner"
-      SUBPRIME_AUTH__PASSWORD_HASH: ${GARDEN_PASSWORD_HASH}
-      SUBPRIME_AUTH__SESSION_SECRET: ${GARDEN_SESSION_SECRET}
     healthcheck:
       test: ["CMD", "/subprime-garden", "healthcheck"]
       interval: 30s

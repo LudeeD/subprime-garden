@@ -6,6 +6,12 @@ After=network.target
 Type=simple
 User=subprime-garden
 Group=subprime-garden
+# Templates/static load from ./templates and ./static (relative, not
+# configurable) at startup, so WorkingDirectory is what makes those
+# resolve — run `subprime-garden init /etc/subprime-garden` once to
+# scaffold them there alongside garden.toml (see README.md). Editing them
+# afterwards only needs `systemctl restart`, not a rebuild.
+WorkingDirectory=/etc/subprime-garden
 ExecStart=/usr/local/bin/subprime-garden serve --config /etc/subprime-garden/garden.toml
 # Secrets that shouldn't live in the TOML file (password hash, session
 # secret) can go here instead, as SUBPRIME_* env vars — see README.md.

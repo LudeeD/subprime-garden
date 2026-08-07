@@ -131,6 +131,8 @@ fn import_one(
                     html: rendered.html,
                     excerpt: rendered.excerpt,
                     content_hash: rendered.content_hash,
+                    created_at,
+                    published_at,
                 },
             )?;
             posts::set_status(conn, existing.id, status)?;
@@ -176,6 +178,8 @@ fn find_markdown_files(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
         .filter(|e| e.file_type().is_file())
         .map(|e| e.into_path())
         .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("md"))
+        // Zola/Hugo section pages, not content.
+        .filter(|p| p.file_stem().and_then(|s| s.to_str()) != Some("_index"))
         .collect();
     files.sort();
     Ok(files)

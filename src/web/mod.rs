@@ -29,6 +29,7 @@ pub struct AppState {
     pub login_ratelimit: Arc<RateLimiter>,
     pub analytics: Arc<AnalyticsHandle>,
     pub page_cache: Arc<PageCache>,
+    pub templates: Arc<minijinja::Environment<'static>>,
 }
 
 impl FromRef<AppState> for Key {
@@ -37,27 +38,18 @@ impl FromRef<AppState> for Key {
     }
 }
 
-const STYLE_CSS: &str = include_str!("../../static/style.css");
-
-async fn style_css() -> impl axum::response::IntoResponse {
-    (
-        [(axum::http::header::CONTENT_TYPE, "text/css; charset=utf-8")],
-        STYLE_CSS,
-    )
-}
-
 pub fn build_router(state: AppState) -> Router {
     let public = Router::new()
         .route("/", get(public::index))
         .route("/page/:n", get(public::index_page))
         .route("/archive", get(public::archive))
+        .route("/tags", get(public::list_tags))
         .route("/tag/:slug", get(public::show_tag))
         .route("/feed.xml", get(public::feed_atom))
         .route("/rss.xml", get(public::feed_rss))
         .route("/sitemap.xml", get(public::sitemap))
         .route("/robots.txt", get(public::robots_txt))
         .route("/healthz", get(public::healthz))
-        .route("/static/style.css", get(style_css))
         .route("/:slug", get(public::show_post));
 
     // Content-hashed filenames make every response immutable — cache forever.
@@ -68,9 +60,14 @@ pub fn build_router(state: AppState) -> Router {
             HeaderValue::from_static("public, max-age=31536000, immutable"),
         ));
 
+    // Not content-hashed, so no long-lived Cache-Control here — ServeDir
+    // still handles Last-Modified/conditional GETs for us.
+    let static_files = Router::new().nest_service("/static", ServeDir::new("./static"));
+
     Router::new()
         .merge(public)
         .merge(media)
+        .merge(static_files)
         .nest("/admin", admin::router())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

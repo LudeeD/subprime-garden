@@ -107,13 +107,15 @@ pub struct PostEdit {
     pub html: String,
     pub excerpt: String,
     pub content_hash: String,
+    pub created_at: String,
+    pub published_at: Option<String>,
 }
 
 pub fn update_content(conn: &Connection, id: i64, edit: &PostEdit) -> rusqlite::Result<()> {
     conn.execute(
         "UPDATE posts SET slug = ?1, title = ?2, markdown = ?3, html = ?4, excerpt = ?5,
-             content_hash = ?6, updated_at = ?7
-         WHERE id = ?8",
+             content_hash = ?6, created_at = ?7, published_at = ?8, updated_at = ?9
+         WHERE id = ?10",
         params![
             edit.slug,
             edit.title,
@@ -121,6 +123,8 @@ pub fn update_content(conn: &Connection, id: i64, edit: &PostEdit) -> rusqlite::
             edit.html,
             edit.excerpt,
             edit.content_hash,
+            edit.created_at,
+            edit.published_at,
             now(),
             id
         ],

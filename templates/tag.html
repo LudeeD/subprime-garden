@@ -1,15 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Tagged “{{ tag_name }}” — {{ site.title }}{% endblock %}
 {% block content %}
-<h1>Tagged “{{ tag_name }}”</h1>
+<p class="crumb"><a href="/">..</a></p>
+<h1>#{{ tag_name }}</h1>
+<ul class="post-list">
 {% for post in posts %}
-<article class="post-summary">
-  <h2><a href="/{{ post.slug }}">{{ post.title }}</a></h2>
-  <time datetime="{{ post.published_at }}">{{ post.published_at_human }}</time>
-  <p>{{ post.excerpt }}</p>
-</article>
+<li class="post-item">
+  <div class="post-header">
+    <a href="/{{ post.slug }}" class="post-title-link">{{ post.title }}</a>
+    <time class="post-date" datetime="{{ post.published_at }}">{{ post.published_at_human }}</time>
+  </div>
+</li>
 {% endfor %}
-{% if posts.is_empty() %}
-<p>No posts tagged “{{ tag_name }}”.</p>
+</ul>
+{% if not posts %}
+<p class="no-posts">No posts tagged “{{ tag_name }}”.</p>
 {% endif %}
 {% endblock %}

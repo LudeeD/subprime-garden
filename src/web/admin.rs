@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use axum::extract::{ConnectInfo, Multipart, Path, Query, State};
 use axum::http::HeaderMap;
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Form, Router};
 use axum_extra::extract::cookie::{Cookie, Key, PrivateCookieJar};
@@ -16,7 +16,7 @@ use crate::db::{self, media, posts};
 use crate::error::AppError;
 use crate::media_store;
 use crate::render::{
-    AdminMediaRow, AdminPostRow, AnalyticsTemplate, DashboardTemplate, LoginTemplate,
+    self, AdminMediaRow, AdminPostRow, AnalyticsTemplate, DashboardTemplate, LoginTemplate,
     MediaGridTemplate, PostEditTemplate, PostTemplate, PostsListTemplate, SiteView,
 };
 
@@ -61,7 +61,24 @@ struct PostForm {
     kind: String,
     /// Comma-separated tag names.
     tags: String,
+    /// Only present on the edit form — absent (not just empty) on new-post
+    /// submissions, which don't render these inputs at all.
+    #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
+    published_at: Option<String>,
     csrf_token: String,
+}
+
+/// Parses an HTML `datetime-local` value (`YYYY-MM-DDTHH:MM`, always UTC —
+/// this app has no per-post timezone concept) back into the RFC 3339 form
+/// everything else stores dates in. Blank or unparseable input means
+/// "leave it alone", not "clear it" — a stray clear on this field
+/// shouldn't silently blow away a real timestamp.
+fn parse_datetime_local(s: &str) -> Option<String> {
+    chrono::NaiveDateTime::parse_from_str(s.trim(), "%Y-%m-%dT%H:%M")
+        .ok()
+        .map(|dt| dt.and_utc().to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
 }
 
 fn split_tag_names(csv: &str) -> Vec<String> {
@@ -81,7 +98,10 @@ struct StatusQuery {
     status: Option<String>,
 }
 
-async fn login_form(State(state): State<AppState>, jar: PrivateCookieJar<Key>) -> impl IntoResponse {
+async fn login_form(
+    State(state): State<AppState>,
+    jar: PrivateCookieJar<Key>,
+) -> Result<impl IntoResponse, AppError> {
     let token = auth::random_token();
     let jar = jar.add(auth::cookie::login_csrf_cookie(&token));
     let page = LoginTemplate {
@@ -89,7 +109,8 @@ async fn login_form(State(state): State<AppState>, jar: PrivateCookieJar<Key>) -
         csrf_token: token,
         error: None,
     };
-    (jar, page)
+    let body = render::render(&state.templates, &page)?;
+    Ok((jar, Html(body)))
 }
 
 async fn login_submit(
@@ -117,7 +138,8 @@ async fn login_submit(
             csrf_token: token,
             error: Some("Invalid username or password.".to_string()),
         };
-        return Ok((jar, page).into_response());
+        let body = render::render(&state.templates, &page)?;
+        return Ok((jar, Html(body)).into_response());
     }
 
     let session = SessionData::new();
@@ -143,7 +165,7 @@ async fn logout(
 async fn dashboard(
     session: AdminSession,
     State(state): State<AppState>,
-) -> Result<DashboardTemplate, AppError> {
+) -> Result<Html<String>, AppError> {
     let (recent, published_count, draft_count, week) = db::with_conn(&state.db, |conn| {
         let recent: Vec<Post> = posts::list_all(conn, None)?.into_iter().take(10).collect();
         let published_count = posts::count_by_status(conn, PostStatus::Published)?;
@@ -153,7 +175,7 @@ async fn dashboard(
     })
     .await?;
 
-    Ok(DashboardTemplate {
+    let ctx = DashboardTemplate {
         site: SiteView::from(&state.config.site),
         csrf_token: session.csrf,
         recent_posts: recent.iter().map(AdminPostRow::from).collect(),
@@ -161,13 +183,14 @@ async fn dashboard(
         draft_count,
         views_7d: week.iter().map(|d| d.views).sum(),
         uniques_7d: week.iter().map(|d| d.uniques).sum(),
-    })
+    };
+    Ok(Html(render::render(&state.templates, &ctx)?))
 }
 
 async fn admin_analytics(
     session: AdminSession,
     State(state): State<AppState>,
-) -> Result<AnalyticsTemplate, AppError> {
+) -> Result<Html<String>, AppError> {
     let (series7, series30, series90, top_posts, top_referrers, total_views) =
         db::with_conn(&state.db, |conn| {
             let series7 = crate::db::analytics::daily_series(conn, 7)?;
@@ -184,7 +207,7 @@ async fn admin_analytics(
     let sum_uniques = |s: &[crate::db::analytics::DayStat]| s.iter().map(|d| d.uniques).sum::<i64>();
     let views_series = |s: &[crate::db::analytics::DayStat]| s.iter().map(|d| d.views).collect::<Vec<_>>();
 
-    Ok(AnalyticsTemplate {
+    let ctx = AnalyticsTemplate {
         site: SiteView::from(&state.config.site),
         csrf_token: session.csrf,
         total_views,
@@ -207,26 +230,31 @@ async fn admin_analytics(
             .collect(),
         dropped_events: state.analytics.dropped_count(),
         feed_hits: state.analytics.feed_hits_count(),
-    })
+    };
+    Ok(Html(render::render(&state.templates, &ctx)?))
 }
 
 async fn posts_list(
     session: AdminSession,
     State(state): State<AppState>,
     Query(q): Query<StatusQuery>,
-) -> Result<PostsListTemplate, AppError> {
+) -> Result<Html<String>, AppError> {
     let status_filter = q.status.as_deref().map(PostStatus::from_str);
     let posts = db::with_conn(&state.db, move |conn| posts::list_all(conn, status_filter)).await?;
 
-    Ok(PostsListTemplate {
+    let ctx = PostsListTemplate {
         site: SiteView::from(&state.config.site),
         csrf_token: session.csrf,
         posts: posts.iter().map(AdminPostRow::from).collect(),
-    })
+    };
+    Ok(Html(render::render(&state.templates, &ctx)?))
 }
 
-async fn post_new_form(session: AdminSession, State(state): State<AppState>) -> PostEditTemplate {
-    PostEditTemplate {
+async fn post_new_form(
+    session: AdminSession,
+    State(state): State<AppState>,
+) -> Result<Html<String>, AppError> {
+    let ctx = PostEditTemplate {
         site: SiteView::from(&state.config.site),
         csrf_token: session.csrf,
         is_new: true,
@@ -238,7 +266,10 @@ async fn post_new_form(session: AdminSession, State(state): State<AppState>) -> 
         status: "draft".to_string(),
         saved: false,
         tags: String::new(),
-    }
+        created_at: String::new(),
+        published_at: String::new(),
+    };
+    Ok(Html(render::render(&state.templates, &ctx)?))
 }
 
 async fn post_edit_form(
@@ -246,7 +277,7 @@ async fn post_edit_form(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Query(q): Query<SavedQuery>,
-) -> Result<PostEditTemplate, AppError> {
+) -> Result<Html<String>, AppError> {
     let (post, tags_csv) = db::with_conn(&state.db, move |conn| {
         let post = posts::get_by_id(conn, id)?;
         let tags_csv = match &post {
@@ -258,7 +289,7 @@ async fn post_edit_form(
     .await?;
     let post = post.ok_or(AppError::NotFound)?;
 
-    Ok(PostEditTemplate {
+    let ctx = PostEditTemplate {
         site: SiteView::from(&state.config.site),
         csrf_token: session.csrf,
         is_new: false,
@@ -270,7 +301,10 @@ async fn post_edit_form(
         status: post.status.as_str().to_string(),
         saved: q.saved.unwrap_or(false),
         tags: tags_csv,
-    })
+        created_at: render::datetime_local(Some(&post.created_at)),
+        published_at: render::datetime_local(post.published_at.as_deref()),
+    };
+    Ok(Html(render::render(&state.templates, &ctx)?))
 }
 
 async fn post_create(
@@ -337,8 +371,13 @@ async fn post_update(
     let markdown_src = form.markdown;
     let requested_slug = form.slug.trim().to_string();
     let tag_names = split_tag_names(&form.tags);
+    let created_at_input = form.created_at;
+    let published_at_input = form.published_at;
 
-    db::with_conn(&state.db, move |conn| {
+    let found = db::with_conn(&state.db, move |conn| {
+        let Some(existing) = posts::get_by_id(conn, id)? else {
+            return Ok(false);
+        };
         let slug_source = if requested_slug.is_empty() {
             title.as_str()
         } else {
@@ -348,6 +387,14 @@ async fn post_update(
         let rendered = markdown::render(&markdown_src, &markdown_cfg, &|filename| {
             media::variant_lookup(conn, filename)
         });
+        let created_at = created_at_input
+            .as_deref()
+            .and_then(parse_datetime_local)
+            .unwrap_or(existing.created_at);
+        let published_at = published_at_input
+            .as_deref()
+            .and_then(parse_datetime_local)
+            .or(existing.published_at);
         let edit = posts::PostEdit {
             slug: post_slug,
             title,
@@ -355,12 +402,18 @@ async fn post_update(
             html: rendered.html,
             excerpt: rendered.excerpt,
             content_hash: rendered.content_hash,
+            created_at,
+            published_at,
         };
         posts::update_content(conn, id, &edit)?;
         let tag_ids = crate::db::tags::find_or_create(conn, &tag_names)?;
-        crate::db::tags::set_post_tags(conn, id, &tag_ids)
+        crate::db::tags::set_post_tags(conn, id, &tag_ids)?;
+        Ok(true)
     })
     .await?;
+    if !found {
+        return Err(AppError::NotFound);
+    }
     state.page_cache.invalidate_all();
 
     Ok(Redirect::to(&format!("/admin/posts/{id}/edit?saved=true")))
@@ -412,7 +465,7 @@ async fn post_preview(
     _session: AdminSession,
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> Result<PostTemplate, AppError> {
+) -> Result<Html<String>, AppError> {
     let (post, post_tags) = db::with_conn(&state.db, move |conn| {
         let post = posts::get_by_id(conn, id)?;
         let tags = match &post {
@@ -424,22 +477,24 @@ async fn post_preview(
     .await?;
     let post = post.ok_or(AppError::NotFound)?;
 
-    Ok(PostTemplate {
+    let ctx = PostTemplate {
         site: SiteView::from(&state.config.site),
         post: crate::render::PostView::with_tags(&post, &post_tags),
-    })
+    };
+    Ok(Html(render::render(&state.templates, &ctx)?))
 }
 
 async fn media_grid(
     session: AdminSession,
     State(state): State<AppState>,
-) -> Result<MediaGridTemplate, AppError> {
+) -> Result<Html<String>, AppError> {
     let items = db::with_conn(&state.db, media::list_all).await?;
-    Ok(MediaGridTemplate {
+    let ctx = MediaGridTemplate {
         site: SiteView::from(&state.config.site),
         csrf_token: session.csrf,
         items: items.iter().map(AdminMediaRow::from).collect(),
-    })
+    };
+    Ok(Html(render::render(&state.templates, &ctx)?))
 }
 
 async fn media_upload(
@@ -523,4 +578,23 @@ async fn media_delete(
     db::with_conn(&state.db, move |conn| media::delete(conn, id)).await?;
 
     Ok(Redirect::to("/admin/media"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_datetime_local_round_trips() {
+        assert_eq!(
+            parse_datetime_local("2026-01-02T03:04"),
+            Some("2026-01-02T03:04:00.000Z".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_datetime_local_rejects_blank_or_garbage() {
+        assert_eq!(parse_datetime_local(""), None);
+        assert_eq!(parse_datetime_local("not a date"), None);
+    }
 }

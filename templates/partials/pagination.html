@@ -1,7 +1,7 @@
-{% if pagination.has_prev || pagination.has_next %}
+{% if pagination.has_prev or pagination.has_next %}
 <nav class="pagination">
   {% if pagination.has_prev %}<a href="{{ pagination.prev_url }}">← newer</a>{% endif %}
-  {% if pagination.has_prev && pagination.has_next %} · {% endif %}
+  {% if pagination.has_prev and pagination.has_next %} · {% endif %}
   {% if pagination.has_next %}<a href="{{ pagination.next_url }}">older →</a>{% endif %}
 </nav>
 {% endif %}

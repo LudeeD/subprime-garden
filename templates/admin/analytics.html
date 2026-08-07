@@ -29,7 +29,7 @@
     {% for row in top_posts %}
       <li>{{ row.label }} <span class="post-meta">{{ row.count }}</span></li>
     {% endfor %}
-    {% if top_posts.is_empty() %}<li>No data yet.</li>{% endif %}
+    {% if not top_posts %}<li>No data yet.</li>{% endif %}
     </ol>
   </section>
   <section>
@@ -38,7 +38,7 @@
     {% for row in top_referrers %}
       <li>{{ row.label }} <span class="post-meta">{{ row.count }}</span></li>
     {% endfor %}
-    {% if top_referrers.is_empty() %}<li>No data yet.</li>{% endif %}
+    {% if not top_referrers %}<li>No data yet.</li>{% endif %}
     </ol>
   </section>
 </div>

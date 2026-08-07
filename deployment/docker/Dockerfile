@@ -35,7 +35,14 @@ RUN cargo build --release --target "$(cat /rust_target)" --bin subprime-garden \
 
 # distroless/static has no libc, no shell, no package manager — a fully
 # static musl binary is the only thing that runs here, which is the point.
+# This image ships the binary only — no templates/static. `serve` reads
+# them from ./templates and ./static (relative to WORKDIR, so /templates
+# and /static here); `init` scaffolds them from what got embedded into the
+# binary at this build's compile time. compose.yaml bind-mounts a host
+# directory over those paths so `init` (run once) plus a container restart
+# is how a theme edit takes effect — never an image rebuild.
 FROM gcr.io/distroless/static-debian12:latest
+WORKDIR /
 COPY --from=builder /subprime-garden /subprime-garden
 
 USER 1000:1000

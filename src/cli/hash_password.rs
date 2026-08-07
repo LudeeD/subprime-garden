@@ -1,23 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use argon2::Argon2;
 use rand_core::OsRng;
 
-pub fn run() -> Result<()> {
-    let password = rpassword::prompt_password("Password: ").context("failed to read password")?;
-    let confirm = rpassword::prompt_password("Confirm: ").context("failed to read password")?;
-    if password != confirm {
-        anyhow::bail!("passwords did not match");
-    }
-    if password.is_empty() {
-        anyhow::bail!("password must not be empty");
-    }
-
-    println!("{}", hash(&password)?);
-    Ok(())
-}
-
-fn hash(password: &str) -> Result<String> {
+/// Used by `init` to turn a prompted plaintext password into what
+/// `[auth] password_hash` actually stores.
+pub fn hash(password: &str) -> Result<String> {
     let salt = SaltString::generate(&mut OsRng);
     let hash = Argon2::default()
         .hash_password(password.as_bytes(), &salt)

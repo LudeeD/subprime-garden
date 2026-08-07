@@ -1,14 +1,18 @@
 {% extends "base.html" %}
 {% block content %}
+<h1>Recent posts</h1>
+<ul class="post-list">
 {% for post in posts %}
-<article class="post-summary">
-  <h2><a href="/{{ post.slug }}">{{ post.title }}</a></h2>
-  <time datetime="{{ post.published_at }}">{{ post.published_at_human }}</time>
-  <p>{{ post.excerpt }}</p>
-</article>
+<li class="post-item">
+  <div class="post-header">
+    <a href="/{{ post.slug }}" class="post-title-link">{{ post.title }}</a>
+    <time class="post-date" datetime="{{ post.published_at }}">{{ post.published_at_human }}</time>
+  </div>
+</li>
 {% endfor %}
-{% if posts.is_empty() %}
-<p>Nothing published yet.</p>
+</ul>
+{% if not posts %}
+<p class="no-posts">Nothing published yet.</p>
 {% endif %}
 {% include "partials/pagination.html" %}
 {% endblock %}

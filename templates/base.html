@@ -10,9 +10,13 @@
 </head>
 <body>
 <header class="site-header">
-  <a class="site-title" href="/">{{ site.title }}</a>
+  <div>
+    <a class="site-title" href="/">{{ site.title }}</a>
+    {% if site.description %}<p class="site-description">{{ site.description }}</p>{% endif %}
+  </div>
   <nav>
     <a href="/archive">archive</a>
+    <a href="/tags">tags</a>
   </nav>
 </header>
 <main>

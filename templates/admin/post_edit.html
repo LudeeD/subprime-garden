@@ -2,7 +2,8 @@
 {% block title %}{% if is_new %}New post{% else %}Edit — {{ title }}{% endif %} — {{ site.title }}{% endblock %}
 {% block content %}
 <h1>{% if is_new %}New post{% else %}Edit post{% endif %}</h1>
-{% if saved %}<p class="flash">Saved.</p>{% endif %}
+<p class="admin-status-badge">Status: <strong>{{ status }}</strong>{% if is_new %} — new posts are saved as drafts; use "publish" below once it's ready.{% endif %}</p>
+{% if saved %}<p class="flash">Saved{% if status == "draft" %} as draft{% endif %}.</p>{% endif %}
 
 <form method="post" action="{% if is_new %}/admin/posts{% else %}/admin/posts/{{ id }}{% endif %}" id="post-form">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -25,13 +26,21 @@
   <label>Tags (comma-separated)<br>
     <input type="text" name="tags" value="{{ tags }}">
   </label>
+  {% if not is_new %}
+  <label>Created<br>
+    <input type="datetime-local" name="created_at" value="{{ created_at }}">
+  </label>
+  <label>Published (blank if unpublished; leave alone to keep the current value)<br>
+    <input type="datetime-local" name="published_at" value="{{ published_at }}">
+  </label>
+  {% endif %}
   <label>Markdown<br>
     <textarea name="markdown" rows="24" cols="80">{{ markdown }}</textarea>
   </label>
   <button type="submit">Save</button>
 </form>
 
-{% if !is_new %}
+{% if not is_new %}
 <p class="admin-post-actions">
   <a href="/admin/preview/{{ id }}">preview</a> ·
   {% if status == "published" %}

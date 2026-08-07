@@ -11,7 +11,7 @@
   <span class="post-meta">{{ post.status }} · {{ post.updated_at_human }}</span>
 </li>
 {% endfor %}
-{% if recent_posts.is_empty() %}
+{% if not recent_posts %}
 <li>No posts yet. <a href="/admin/posts/new">Write one</a>.</li>
 {% endif %}
 </ul>

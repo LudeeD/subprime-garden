@@ -1,4 +1,3 @@
-use askama::Template;
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -8,14 +7,17 @@ use crate::error::AppError;
 use crate::render::cache::render_cached;
 use crate::render::feeds;
 use crate::render::{
-    ArchiveTemplate, IndexTemplate, PaginationView, PostTemplate, PostView, SiteView, TagTemplate,
+    ArchiveTemplate, IndexTemplate, PaginationView, PostTemplate, PostView, SiteView, TagCountView,
+    TagTemplate, TagsTemplate,
 };
 
 use super::AppState;
 
-fn render_template(t: impl Template) -> Result<String, AppError> {
-    t.render()
-        .map_err(|e| anyhow::anyhow!("template render error: {e}").into())
+fn render_template<T: crate::render::TemplateCtx>(
+    env: &minijinja::Environment,
+    ctx: &T,
+) -> Result<String, AppError> {
+    crate::render::render(env, ctx)
 }
 
 fn if_none_match(headers: &HeaderMap) -> Option<&str> {
@@ -44,11 +46,14 @@ async fn render_index(
 
         let total_pages = ((total as u32).saturating_sub(1) / per_page.max(1)) + 1;
 
-        render_template(IndexTemplate {
-            site: SiteView::from(&state.config.site),
-            posts: posts.iter().map(PostView::from).collect(),
-            pagination: PaginationView::new(page, total_pages, "/"),
-        })
+        render_template(
+            &state.templates,
+            &IndexTemplate {
+                site: SiteView::from(&state.config.site),
+                posts: posts.iter().map(PostView::from).collect(),
+                pagination: PaginationView::new(page, total_pages, "/"),
+            },
+        )
     })
     .await
 }
@@ -91,10 +96,13 @@ pub async fn show_post(
             .await?;
             let post = post.ok_or(AppError::NotFound)?;
 
-            render_template(PostTemplate {
-                site: SiteView::from(&state.config.site),
-                post: PostView::with_tags(&post, &post_tags),
-            })
+            render_template(
+                &state.templates,
+                &PostTemplate {
+                    site: SiteView::from(&state.config.site),
+                    post: PostView::with_tags(&post, &post_tags),
+                },
+            )
         },
     )
     .await
@@ -108,10 +116,13 @@ pub async fn archive(State(state): State<AppState>, headers: HeaderMap) -> Resul
         if_none_match(&headers),
         || async {
             let posts = db::with_conn(&state.db, posts::list_all_published).await?;
-            render_template(ArchiveTemplate {
-                site: SiteView::from(&state.config.site),
-                posts: posts.iter().map(PostView::from).collect(),
-            })
+            render_template(
+                &state.templates,
+                &ArchiveTemplate {
+                    site: SiteView::from(&state.config.site),
+                    posts: posts.iter().map(PostView::from).collect(),
+                },
+            )
         },
     )
     .await
@@ -140,11 +151,34 @@ pub async fn show_tag(
             .await?;
             let tag = tag.ok_or(AppError::NotFound)?;
 
-            render_template(TagTemplate {
-                site: SiteView::from(&state.config.site),
-                tag_name: tag.name,
-                posts: posts.iter().map(PostView::from).collect(),
-            })
+            render_template(
+                &state.templates,
+                &TagTemplate {
+                    site: SiteView::from(&state.config.site),
+                    tag_name: tag.name,
+                    posts: posts.iter().map(PostView::from).collect(),
+                },
+            )
+        },
+    )
+    .await
+}
+
+pub async fn list_tags(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, AppError> {
+    render_cached(
+        &state.page_cache,
+        "/tags",
+        "text/html; charset=utf-8",
+        if_none_match(&headers),
+        || async {
+            let tags = db::with_conn(&state.db, tags::list_all_with_counts).await?;
+            render_template(
+                &state.templates,
+                &TagsTemplate {
+                    site: SiteView::from(&state.config.site),
+                    tags: tags.iter().map(TagCountView::from).collect(),
+                },
+            )
         },
     )
     .await

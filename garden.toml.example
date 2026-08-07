@@ -19,10 +19,10 @@ media_dir = "./data/media"
 trust_proxy_headers = false
 
 [auth]
+# username and both fields below get filled in for you by:
+#   subprime-garden init
 username = "owner"
-# Generate with: subprime-garden hash-password
 password_hash = "$argon2id$v=19$m=19456,t=2,p=1$REPLACE$ME"
-# Generate with: openssl rand -base64 48
 session_secret = "replace-with-at-least-32-random-bytes"
 session_ttl_days = 30
 
