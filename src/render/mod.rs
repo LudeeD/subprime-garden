@@ -62,16 +62,6 @@ pub async fn render<T: TemplateCtx>(db: &Pool, env: &minijinja::Environment<'_>,
     render().map_err(|e| anyhow::anyhow!("template render error: {e}").into())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn stock_templates_parse() {
-        build_env().expect("every template under ./templates should parse");
-    }
-}
-
 #[derive(Serialize)]
 pub struct SiteView {
     pub title: String,

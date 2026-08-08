@@ -1,5 +1,7 @@
 /target
 /data
+/templates
+/static
 .env
 *.db
 *.db-wal

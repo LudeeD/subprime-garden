@@ -7,11 +7,11 @@ use rust_embed::Embed;
 use crate::cli::hash_password;
 
 #[derive(Embed)]
-#[folder = "templates/"]
+#[folder = "src/render/default_templates/"]
 struct StockTemplates;
 
 #[derive(Embed)]
-#[folder = "static/"]
+#[folder = "src/render/default_static/"]
 struct StockStatic;
 
 const GARDEN_TOML_EXAMPLE: &str = include_str!("../../garden.toml.example");
@@ -156,4 +156,23 @@ fn resolve_session_secret(doc: &mut toml_edit::DocumentMut) -> Result<()> {
         .unwrap_or_else(crate::auth::random_token);
     doc["auth"]["session_secret"] = toml_edit::value(value);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The stock templates `theme`/`init` scaffold onto disk must parse as
+    /// valid minijinja alongside the baked-in admin templates, since a fresh
+    /// site combines both (site templates from disk, admin from the binary).
+    #[test]
+    fn stock_templates_parse() {
+        let mut env = minijinja::Environment::new();
+        for name in StockTemplates::iter() {
+            let file = StockTemplates::get(&name).expect("just listed by iter()");
+            let source = std::str::from_utf8(&file.data).expect("stock template is valid utf-8").to_string();
+            env.add_template_owned(name.to_string(), source).expect("every stock template should parse");
+        }
+        crate::render::admin_assets::register(&mut env).expect("admin templates should parse");
+    }
 }

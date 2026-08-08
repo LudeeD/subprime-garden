@@ -46,10 +46,13 @@ time = "0.3"
 # templating
 minijinja = "2"
 
-# `init` scaffolding — embeds templates/, static/, garden.toml.example into
-# the binary at release-build time only (dev builds read from disk), so
-# `subprime-garden init` can seed a fresh deployment without needing the
-# git repo checked out.
+# Embeds src/render/default_templates/, src/render/default_static/, and
+# garden.toml.example into the binary at release-build time only (dev builds
+# read from disk) so `init`/`theme` can seed a fresh deployment's theme
+# without the git repo checked out, and separately embeds
+# src/render/admin_templates/ + admin_static/ so the admin UI ships in every
+# binary and is never written to disk or user-overridable (see
+# src/render/admin_assets.rs).
 rust-embed = "8"
 
 # content

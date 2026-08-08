@@ -6,14 +6,14 @@
 use rust_embed::Embed;
 
 #[derive(Embed)]
-#[folder = "admin_templates/"]
+#[folder = "src/render/admin_templates/"]
 struct AdminTemplates;
 
 #[derive(Embed)]
-#[folder = "admin_static/"]
+#[folder = "src/render/admin_static/"]
 struct AdminStatic;
 
-/// Registers every `admin_templates/*.html` file under the `admin/` prefix
+/// Registers every file under `admin_templates/` under the `admin/` prefix
 /// (e.g. `admin_templates/base.html` -> `admin/base.html`), matching the
 /// names admin `TemplateCtx` impls and `{% extends %}` tags already use.
 pub fn register(env: &mut minijinja::Environment<'static>) -> anyhow::Result<()> {
