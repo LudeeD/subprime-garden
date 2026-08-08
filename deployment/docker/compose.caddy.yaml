@@ -10,7 +10,7 @@
 #   docker compose -f compose.caddy.yaml up -d
 services:
   garden:
-    image: ghcr.io/OWNER/subprime-garden:latest
+    image: ghcr.io/ludeed/subprime-garden:latest
     restart: unless-stopped
     expose: ["8080"]
     volumes:

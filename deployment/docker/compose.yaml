@@ -6,7 +6,7 @@
 # (container is UID 1000, non-root — see README's Quickstart)
 services:
   garden:
-    image: ghcr.io/OWNER/subprime-garden:latest
+    image: ghcr.io/ludeed/subprime-garden:latest
     restart: unless-stopped
     ports: ["127.0.0.1:8080:8080"]
     volumes:
