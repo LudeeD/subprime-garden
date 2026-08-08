@@ -14,6 +14,12 @@ pub struct SiteConfig {
     pub author: String,
     pub timezone: String,
     pub posts_per_page: u32,
+    /// Taxonomy names content can be grouped under (Zola calls these the
+    /// same thing) — each gets a `/<name>` index and `/<name>/:slug` term
+    /// page. Posts assign terms per taxonomy in frontmatter, either
+    /// top-level `tags = [...]` (a shortcut for the "tags" taxonomy) or
+    /// `[taxonomies]` with one key per name.
+    pub taxonomies: Vec<String>,
 }
 
 impl Default for SiteConfig {
@@ -25,6 +31,7 @@ impl Default for SiteConfig {
             author: String::new(),
             timezone: "UTC".into(),
             posts_per_page: 20,
+            taxonomies: vec!["tags".into()],
         }
     }
 }
@@ -152,7 +159,23 @@ pub enum ConfigError {
     WeakSessionSecret,
     #[error("server.bind is not a valid socket address: {0}")]
     InvalidBind(String),
+    #[error(
+        "site.taxonomies entry {0:?} is invalid — taxonomy names must be lowercase ascii \
+         letters, digits, or hyphens"
+    )]
+    InvalidTaxonomyName(String),
+    #[error("site.taxonomies entry {0:?} collides with a reserved path — pick a different name")]
+    ReservedTaxonomyName(String),
+    #[error("site.taxonomies has {0:?} listed more than once")]
+    DuplicateTaxonomyName(String),
 }
+
+/// Top-level paths already claimed by other routes — a taxonomy name can't
+/// reuse one without shadowing it.
+const RESERVED_TAXONOMY_NAMES: &[&str] = &[
+    "archive", "tag", "page", "feed.xml", "rss.xml", "sitemap.xml", "robots.txt", "healthz",
+    "media", "static", "admin",
+];
 
 impl Config {
     /// Load from an optional TOML file, then apply `SUBPRIME_*` env var overrides.
@@ -188,6 +211,21 @@ impl Config {
         }
         self.bind_addr()
             .map_err(|_| ConfigError::InvalidBind(self.server.bind.clone()))?;
+
+        let mut seen = std::collections::HashSet::new();
+        for name in &self.site.taxonomies {
+            if name.is_empty()
+                || !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            {
+                return Err(ConfigError::InvalidTaxonomyName(name.clone()));
+            }
+            if RESERVED_TAXONOMY_NAMES.contains(&name.as_str()) {
+                return Err(ConfigError::ReservedTaxonomyName(name.clone()));
+            }
+            if !seen.insert(name.clone()) {
+                return Err(ConfigError::DuplicateTaxonomyName(name.clone()));
+            }
+        }
         Ok(())
     }
 

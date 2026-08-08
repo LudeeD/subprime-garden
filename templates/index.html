@@ -1,5 +1,11 @@
 {% extends "base.html" %}
 {% block content %}
+{% if pages.about and not pagination.has_prev %}
+<section class="featured-page">
+  <h2>{{ pages.about.title }}</h2>
+  <div class="post-body">{{ pages.about.html|safe }}</div>
+</section>
+{% endif %}
 <h1>Recent posts</h1>
 <ul class="post-list">
 {% for post in posts %}

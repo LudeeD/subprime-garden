@@ -5,8 +5,8 @@ pub mod public;
 
 use std::sync::Arc;
 
-use axum::extract::FromRef;
-use axum::http::{header, HeaderValue};
+use axum::extract::{FromRef, Path, State};
+use axum::http::{header, HeaderMap, HeaderValue};
 use axum::routing::get;
 use axum::Router;
 use axum_extra::extract::cookie::Key;
@@ -39,18 +39,42 @@ impl FromRef<AppState> for Key {
 }
 
 pub fn build_router(state: AppState) -> Router {
-    let public = Router::new()
+    let mut public = Router::new()
         .route("/", get(public::index))
         .route("/page/:n", get(public::index_page))
         .route("/archive", get(public::archive))
-        .route("/tags", get(public::list_tags))
-        .route("/tag/:slug", get(public::show_tag))
+        .route("/tag/:slug", get(public::legacy_tag_redirect))
         .route("/feed.xml", get(public::feed_atom))
         .route("/rss.xml", get(public::feed_rss))
         .route("/sitemap.xml", get(public::sitemap))
         .route("/robots.txt", get(public::robots_txt))
-        .route("/healthz", get(public::healthz))
-        .route("/:slug", get(public::show_post));
+        .route("/healthz", get(public::healthz));
+
+    // One index + one term route per configured taxonomy (e.g. `/tags`,
+    // `/tags/:slug`), registered dynamically since the set of taxonomies
+    // comes from garden.toml, not a fixed list. `Config::validate` already
+    // rejects names that would collide with the static routes above.
+    for name in &state.config.site.taxonomies {
+        let index_name = name.clone();
+        let term_name = name.clone();
+        public = public
+            .route(
+                &format!("/{name}"),
+                get(move |state: State<AppState>, headers: HeaderMap| {
+                    let name = index_name.clone();
+                    async move { public::taxonomy_index(state, headers, name).await }
+                }),
+            )
+            .route(
+                &format!("/{name}/:slug"),
+                get(move |state: State<AppState>, headers: HeaderMap, path: Path<String>| {
+                    let name = term_name.clone();
+                    async move { public::taxonomy_term(state, headers, path, name).await }
+                }),
+            );
+    }
+
+    let public = public.route("/:slug", get(public::show_post));
 
     // Content-hashed filenames make every response immutable — cache forever.
     let media = Router::new()

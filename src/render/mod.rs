@@ -2,11 +2,14 @@ pub mod cache;
 pub mod feeds;
 pub mod sparkline;
 
+use std::collections::HashMap;
+
 use serde::Serialize;
 
 use crate::config::SiteConfig;
 use crate::db::models::{Media, Post};
-use crate::db::tags::Tag;
+use crate::db::taxonomy::Term;
+use crate::db::Pool;
 use crate::error::AppError;
 
 pub trait TemplateCtx: Serialize {
@@ -39,11 +42,21 @@ pub fn build_env() -> anyhow::Result<minijinja::Environment<'static>> {
     Ok(env)
 }
 
-/// Renders `ctx` with the template named by `T::NAME`.
-pub fn render<T: TemplateCtx>(env: &minijinja::Environment, ctx: &T) -> Result<String, AppError> {
-    env.get_template(T::NAME)
-        .and_then(|t| t.render(ctx))
-        .map_err(|e| anyhow::anyhow!("template render error: {e}").into())
+/// Renders `ctx` with the template named by `T::NAME`. Every template also
+/// gets a `pages` global merged in alongside `ctx` — every published page
+/// (`kind = "page"`), keyed by slug — so any template can embed one by name
+/// (e.g. `{% if pages.about %}{{ pages.about.html|safe }}{% endif %}`) with
+/// no Rust or config change needed to add or move an embed.
+pub async fn render<T: TemplateCtx>(db: &Pool, env: &minijinja::Environment<'_>, ctx: &T) -> Result<String, AppError> {
+    let pages = crate::db::with_conn(db, crate::db::posts::list_published_pages).await?;
+    let pages_by_slug: HashMap<String, PostView> =
+        pages.iter().map(|p| (p.slug.clone(), PostView::from(p))).collect();
+
+    let render = || -> Result<String, minijinja::Error> {
+        let tmpl = env.get_template(T::NAME)?;
+        tmpl.render(minijinja::context! { pages => pages_by_slug, ..minijinja::Value::from_serialize(ctx) })
+    };
+    render().map_err(|e| anyhow::anyhow!("template render error: {e}").into())
 }
 
 #[cfg(test)]
@@ -62,6 +75,7 @@ pub struct SiteView {
     pub description: String,
     pub base_url: String,
     pub author: String,
+    pub taxonomies: Vec<String>,
 }
 
 impl From<&SiteConfig> for SiteView {
@@ -71,31 +85,39 @@ impl From<&SiteConfig> for SiteView {
             description: c.description.clone(),
             base_url: c.base_url.clone(),
             author: c.author.clone(),
+            taxonomies: c.taxonomies.clone(),
         }
     }
 }
 
-/// A tag as seen by templates.
+/// A taxonomy term as seen by templates.
 #[derive(Serialize)]
-pub struct TagView {
+pub struct TermView {
     pub name: String,
     pub slug: String,
 }
 
-impl From<&Tag> for TagView {
-    fn from(t: &Tag) -> Self {
-        TagView {
+impl From<&Term> for TermView {
+    fn from(t: &Term) -> Self {
+        TermView {
             name: t.name.clone(),
             slug: t.slug.clone(),
         }
     }
 }
 
+/// A post's terms in one taxonomy, e.g. `{taxonomy: "tags", terms: [...]}`.
+#[derive(Serialize)]
+pub struct TaxonomyGroupView {
+    pub taxonomy: String,
+    pub terms: Vec<TermView>,
+}
+
 /// A post or page as seen by templates. `published_at` is raw ISO 8601 for
 /// the `<time datetime>` attribute; `published_at_human` is pre-formatted
-/// for display so templates never need date-formatting logic. `tags` is left
-/// empty in listing contexts (index, archive, tag pages) — only the post
-/// detail page fetches and attaches them, via `with_tags`.
+/// for display so templates never need date-formatting logic. `taxonomies`
+/// is left empty in listing contexts (index, archive, term pages) — only
+/// the post detail page fetches and attaches them, via `with_taxonomies`.
 #[derive(Serialize)]
 pub struct PostView {
     pub slug: String,
@@ -104,7 +126,7 @@ pub struct PostView {
     pub excerpt: String,
     pub published_at: String,
     pub published_at_human: String,
-    pub tags: Vec<TagView>,
+    pub taxonomies: Vec<TaxonomyGroupView>,
 }
 
 impl From<&Post> for PostView {
@@ -116,17 +138,27 @@ impl From<&Post> for PostView {
             excerpt: p.excerpt.clone(),
             published_at: p.published_at.clone().unwrap_or_default(),
             published_at_human: humanize_date(p.published_at.as_deref()),
-            tags: Vec::new(),
+            taxonomies: Vec::new(),
         }
     }
 }
 
 impl PostView {
-    pub fn with_tags(post: &Post, tags: &[Tag]) -> Self {
-        PostView {
-            tags: tags.iter().map(TagView::from).collect(),
-            ..PostView::from(post)
+    /// `terms` must already be ordered by taxonomy (see
+    /// `taxonomy::all_for_post`) so consecutive equal-taxonomy rows can be
+    /// grouped in a single pass.
+    pub fn with_taxonomies(post: &Post, terms: &[Term]) -> Self {
+        let mut groups: Vec<TaxonomyGroupView> = Vec::new();
+        for term in terms {
+            match groups.last_mut() {
+                Some(g) if g.taxonomy == term.taxonomy => g.terms.push(TermView::from(term)),
+                _ => groups.push(TaxonomyGroupView {
+                    taxonomy: term.taxonomy.clone(),
+                    terms: vec![TermView::from(term)],
+                }),
+            }
         }
+        PostView { taxonomies: groups, ..PostView::from(post) }
     }
 }
 
@@ -203,25 +235,27 @@ impl TemplateCtx for ArchiveTemplate {
 }
 
 #[derive(Serialize)]
-pub struct TagTemplate {
+pub struct TaxonomyTermTemplate {
     pub site: SiteView,
-    pub tag_name: String,
+    pub taxonomy: String,
+    pub taxonomy_label: String,
+    pub term_name: String,
     pub posts: Vec<PostView>,
 }
-impl TemplateCtx for TagTemplate {
-    const NAME: &'static str = "tag.html";
+impl TemplateCtx for TaxonomyTermTemplate {
+    const NAME: &'static str = "taxonomy_term.html";
 }
 
 #[derive(Serialize)]
-pub struct TagCountView {
+pub struct TermCountView {
     pub name: String,
     pub slug: String,
     pub count: i64,
 }
 
-impl From<&crate::db::tags::TagCount> for TagCountView {
-    fn from(t: &crate::db::tags::TagCount) -> Self {
-        TagCountView {
+impl From<&crate::db::taxonomy::TermCount> for TermCountView {
+    fn from(t: &crate::db::taxonomy::TermCount) -> Self {
+        TermCountView {
             name: t.name.clone(),
             slug: t.slug.clone(),
             count: t.count,
@@ -230,12 +264,25 @@ impl From<&crate::db::tags::TagCount> for TagCountView {
 }
 
 #[derive(Serialize)]
-pub struct TagsTemplate {
+pub struct TaxonomyIndexTemplate {
     pub site: SiteView,
-    pub tags: Vec<TagCountView>,
+    pub taxonomy: String,
+    pub taxonomy_label: String,
+    pub terms: Vec<TermCountView>,
 }
-impl TemplateCtx for TagsTemplate {
-    const NAME: &'static str = "tags.html";
+impl TemplateCtx for TaxonomyIndexTemplate {
+    const NAME: &'static str = "taxonomy_index.html";
+}
+
+/// Title-cases a taxonomy name for display, e.g. `"tags"` -> `"Tags"`.
+/// Taxonomy names are plain ascii (validated in `Config::validate`), so a
+/// byte-level uppercase of the first character is enough.
+pub fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
+        None => String::new(),
+    }
 }
 
 /// One row in an admin post listing (dashboard recent list, /admin/posts table).
@@ -296,6 +343,14 @@ impl TemplateCtx for PostsListTemplate {
     const NAME: &'static str = "admin/posts_list.html";
 }
 
+/// One taxonomy's admin edit-form input: a comma-separated term list,
+/// pre-filled from the post's current terms in that taxonomy.
+#[derive(Serialize)]
+pub struct TaxonomyFieldView {
+    pub name: String,
+    pub value: String,
+}
+
 #[derive(Serialize)]
 pub struct PostEditTemplate {
     pub site: SiteView,
@@ -308,8 +363,8 @@ pub struct PostEditTemplate {
     pub kind: String,
     pub status: String,
     pub saved: bool,
-    /// Comma-separated tag names, pre-filled from the post's current tags.
-    pub tags: String,
+    /// One entry per taxonomy configured in `site.taxonomies`.
+    pub taxonomies: Vec<TaxonomyFieldView>,
     /// `datetime-local` input value — see `datetime_local`.
     pub created_at: String,
     /// `datetime-local` input value; empty when unpublished.

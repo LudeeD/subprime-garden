@@ -1,23 +1,24 @@
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 
-use crate::db::{self, posts, tags};
+use crate::db::{self, posts, taxonomy};
 use crate::error::AppError;
 use crate::render::cache::render_cached;
 use crate::render::feeds;
 use crate::render::{
-    ArchiveTemplate, IndexTemplate, PaginationView, PostTemplate, PostView, SiteView, TagCountView,
-    TagTemplate, TagsTemplate,
+    self, ArchiveTemplate, IndexTemplate, PaginationView, PostTemplate, PostView, SiteView,
+    TaxonomyIndexTemplate, TaxonomyTermTemplate, TermCountView,
 };
 
 use super::AppState;
 
-fn render_template<T: crate::render::TemplateCtx>(
-    env: &minijinja::Environment,
+async fn render_template<T: crate::render::TemplateCtx>(
+    db: &db::Pool,
+    env: &minijinja::Environment<'_>,
     ctx: &T,
 ) -> Result<String, AppError> {
-    crate::render::render(env, ctx)
+    crate::render::render(db, env, ctx).await
 }
 
 fn if_none_match(headers: &HeaderMap) -> Option<&str> {
@@ -47,6 +48,7 @@ async fn render_index(
         let total_pages = ((total as u32).saturating_sub(1) / per_page.max(1)) + 1;
 
         render_template(
+            &state.db,
             &state.templates,
             &IndexTemplate {
                 site: SiteView::from(&state.config.site),
@@ -54,6 +56,7 @@ async fn render_index(
                 pagination: PaginationView::new(page, total_pages, "/"),
             },
         )
+        .await
     })
     .await
 }
@@ -83,12 +86,12 @@ pub async fn show_post(
         "text/html; charset=utf-8",
         if_none_match(&headers),
         || async {
-            let (post, post_tags) = db::with_conn(&state.db, move |conn| {
+            let (post, post_terms) = db::with_conn(&state.db, move |conn| {
                 let post = posts::get_by_slug(conn, &slug, false)?;
                 match post {
                     Some(post) => {
-                        let tags = tags::for_post(conn, post.id)?;
-                        Ok((Some(post), tags))
+                        let terms = taxonomy::all_for_post(conn, post.id)?;
+                        Ok((Some(post), terms))
                     }
                     None => Ok((None, Vec::new())),
                 }
@@ -97,12 +100,14 @@ pub async fn show_post(
             let post = post.ok_or(AppError::NotFound)?;
 
             render_template(
+                &state.db,
                 &state.templates,
                 &PostTemplate {
                     site: SiteView::from(&state.config.site),
-                    post: PostView::with_tags(&post, &post_tags),
+                    post: PostView::with_taxonomies(&post, &post_terms),
                 },
             )
+            .await
         },
     )
     .await
@@ -117,71 +122,95 @@ pub async fn archive(State(state): State<AppState>, headers: HeaderMap) -> Resul
         || async {
             let posts = db::with_conn(&state.db, posts::list_all_published).await?;
             render_template(
+                &state.db,
                 &state.templates,
                 &ArchiveTemplate {
                     site: SiteView::from(&state.config.site),
                     posts: posts.iter().map(PostView::from).collect(),
                 },
             )
+            .await
         },
     )
     .await
 }
 
-pub async fn show_tag(
+pub async fn taxonomy_term(
     State(state): State<AppState>,
-    Path(slug): Path<String>,
     headers: HeaderMap,
+    Path(slug): Path<String>,
+    taxonomy_name: String,
 ) -> Result<Response, AppError> {
-    let cache_key = format!("/tag/{slug}");
+    let cache_key = format!("/{taxonomy_name}/{slug}");
     render_cached(
         &state.page_cache,
         &cache_key,
         "text/html; charset=utf-8",
         if_none_match(&headers),
         || async {
-            let (tag, posts) = db::with_conn(&state.db, move |conn| {
-                let tag = tags::get_by_slug(conn, &slug)?;
-                let posts = match &tag {
-                    Some(t) => tags::list_published_posts_for_tag(conn, t.id, u32::MAX, 0)?,
+            let tax = taxonomy_name.clone();
+            let (term, posts) = db::with_conn(&state.db, move |conn| {
+                let term = taxonomy::get_by_slug(conn, &tax, &slug)?;
+                let posts = match &term {
+                    Some(t) => taxonomy::list_published_posts_for_term(conn, t.id, u32::MAX, 0)?,
                     None => Vec::new(),
                 };
-                Ok((tag, posts))
+                Ok((term, posts))
             })
             .await?;
-            let tag = tag.ok_or(AppError::NotFound)?;
+            let term = term.ok_or(AppError::NotFound)?;
 
             render_template(
+                &state.db,
                 &state.templates,
-                &TagTemplate {
+                &TaxonomyTermTemplate {
                     site: SiteView::from(&state.config.site),
-                    tag_name: tag.name,
+                    taxonomy: taxonomy_name.clone(),
+                    taxonomy_label: render::capitalize(&taxonomy_name),
+                    term_name: term.name,
                     posts: posts.iter().map(PostView::from).collect(),
                 },
             )
+            .await
         },
     )
     .await
 }
 
-pub async fn list_tags(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, AppError> {
+pub async fn taxonomy_index(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    taxonomy_name: String,
+) -> Result<Response, AppError> {
+    let cache_key = format!("/{taxonomy_name}");
     render_cached(
         &state.page_cache,
-        "/tags",
+        &cache_key,
         "text/html; charset=utf-8",
         if_none_match(&headers),
         || async {
-            let tags = db::with_conn(&state.db, tags::list_all_with_counts).await?;
+            let tax = taxonomy_name.clone();
+            let terms = db::with_conn(&state.db, move |conn| taxonomy::list_all_with_counts(conn, &tax)).await?;
             render_template(
+                &state.db,
                 &state.templates,
-                &TagsTemplate {
+                &TaxonomyIndexTemplate {
                     site: SiteView::from(&state.config.site),
-                    tags: tags.iter().map(TagCountView::from).collect(),
+                    taxonomy: taxonomy_name.clone(),
+                    taxonomy_label: render::capitalize(&taxonomy_name),
+                    terms: terms.iter().map(TermCountView::from).collect(),
                 },
             )
+            .await
         },
     )
     .await
+}
+
+/// `/tag/:slug` predates the taxonomy system, back when "tags" was the only
+/// one. Permanent redirect to the namespaced route so old links keep working.
+pub async fn legacy_tag_redirect(Path(slug): Path<String>) -> Redirect {
+    Redirect::permanent(&format!("/tags/{slug}"))
 }
 
 pub async fn feed_atom(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, AppError> {

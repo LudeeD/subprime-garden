@@ -1,8 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Tagged “{{ tag_name }}” — {{ site.title }}{% endblock %}
+{% block title %}“{{ term_name }}” — {{ taxonomy_label }} — {{ site.title }}{% endblock %}
 {% block content %}
-<p class="crumb"><a href="/">..</a></p>
-<h1>#{{ tag_name }}</h1>
+<h1>{{ taxonomy_label }}: #{{ term_name }}</h1>
 <ul class="post-list">
 {% for post in posts %}
 <li class="post-item">
@@ -14,6 +13,6 @@
 {% endfor %}
 </ul>
 {% if not posts %}
-<p class="no-posts">No posts tagged “{{ tag_name }}”.</p>
+<p class="no-posts">No posts in {{ taxonomy }} “{{ term_name }}”.</p>
 {% endif %}
 {% endblock %}

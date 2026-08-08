@@ -1,11 +1,3 @@
-# style
-title of page, and title of the posts the same in the main index page?
-
-there should be a little nod at the bottom to made with subprime-garden (eventually link our website)
-
-its too narrow right now, we can go a bit higher up, something that feels nice 700ish 800 would be the max.
-
-# meta
-what's a page and post?
-
-I wanna borrow the concept of taxonomies from zola, instead of hardcoding like tags or categories or something. dont overcook, but bring the same concept over
+I think I donºt want the admin page to be configurable by theme by users, so the admin templating is just in memory.
+Like django you just have an admin page, but you dont necessarily configure it.
+My thinking is that its gonna be user to make updates to those pages, users can configure their theme for the website, and not worry about updates to the admin page but still updating to latest subprime

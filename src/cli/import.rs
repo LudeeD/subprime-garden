@@ -8,7 +8,7 @@ use crate::content::{frontmatter, markdown, slug};
 use crate::db::media;
 use crate::db::models::{PostKind, PostStatus};
 use crate::db::posts::{self, ImportPost, PostEdit};
-use crate::db::tags;
+use crate::db::taxonomy;
 
 pub struct ImportOptions {
     pub published: bool,
@@ -16,7 +16,13 @@ pub struct ImportOptions {
     pub dry_run: bool,
 }
 
-pub fn run(conn: &mut Connection, dir: &Path, opts: &ImportOptions, markdown_cfg: &MarkdownConfig) -> anyhow::Result<()> {
+pub fn run(
+    conn: &mut Connection,
+    dir: &Path,
+    opts: &ImportOptions,
+    markdown_cfg: &MarkdownConfig,
+    taxonomies: &[String],
+) -> anyhow::Result<()> {
     let files = find_markdown_files(dir)?;
     if files.is_empty() {
         println!("no .md files found under {}", dir.display());
@@ -28,7 +34,7 @@ pub fn run(conn: &mut Connection, dir: &Path, opts: &ImportOptions, markdown_cfg
     let mut errors = 0;
 
     for path in files {
-        match import_one(conn, &path, opts, markdown_cfg) {
+        match import_one(conn, &path, opts, markdown_cfg, taxonomies) {
             Ok(Outcome::Inserted(slug)) => {
                 println!("imported:  {slug:<40} {}", path.display());
                 imported += 1;
@@ -64,6 +70,7 @@ fn import_one(
     path: &Path,
     opts: &ImportOptions,
     markdown_cfg: &MarkdownConfig,
+    taxonomies: &[String],
 ) -> anyhow::Result<Outcome> {
     let raw = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let mtime = std::fs::metadata(path)
@@ -117,7 +124,22 @@ fn import_one(
             rendered.excerpt = description.trim().to_string();
         }
     }
-    let tag_ids = tags::find_or_create(conn, &parsed.frontmatter.tags)?;
+    let mut term_ids_by_taxonomy = Vec::new();
+    let mut unconfigured = Vec::new();
+    for (name, names) in &parsed.frontmatter.taxonomies {
+        if !taxonomies.contains(name) {
+            unconfigured.push(name.as_str());
+            continue;
+        }
+        term_ids_by_taxonomy.push((name.clone(), taxonomy::find_or_create(conn, name, names)?));
+    }
+    if !unconfigured.is_empty() {
+        eprintln!(
+            "warning:   {}: ignoring taxonomy keys not listed in site.taxonomies: {}",
+            path.display(),
+            unconfigured.join(", ")
+        );
+    }
 
     let (post_id, outcome) = match existing {
         Some(existing) => {
@@ -157,7 +179,9 @@ fn import_one(
             (id, Outcome::Inserted(desired_slug))
         }
     };
-    tags::set_post_tags(conn, post_id, &tag_ids)?;
+    for (name, ids) in &term_ids_by_taxonomy {
+        taxonomy::set_post_terms(conn, name, post_id, ids)?;
+    }
 
     Ok(outcome)
 }

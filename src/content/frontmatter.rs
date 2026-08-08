@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::Deserialize;
 
 #[derive(Debug, Default, Clone)]
@@ -5,7 +7,10 @@ pub struct Frontmatter {
     pub title: Option<String>,
     pub date: Option<String>,
     pub slug: Option<String>,
-    pub tags: Vec<String>,
+    /// Terms per taxonomy, e.g. `{"tags": ["a", "b"], "series": ["x"]}` —
+    /// borrowed from Zola's `[taxonomies]` frontmatter table. A top-level
+    /// `tags = [...]` shortcut is folded into the "tags" entry.
+    pub taxonomies: BTreeMap<String, Vec<String>>,
     pub draft: Option<bool>,
     pub description: Option<String>,
 }
@@ -23,28 +28,22 @@ struct RawFrontmatter {
     date: Option<String>,
     slug: Option<String>,
     tags: Vec<String>,
-    taxonomies: Option<RawTaxonomies>,
+    taxonomies: BTreeMap<String, Vec<String>>,
     draft: Option<bool>,
     description: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct RawTaxonomies {
-    tags: Vec<String>,
-}
-
 impl From<RawFrontmatter> for Frontmatter {
     fn from(raw: RawFrontmatter) -> Self {
-        let mut tags = raw.tags;
-        if let Some(taxonomies) = raw.taxonomies {
-            tags.extend(taxonomies.tags);
+        let mut taxonomies = raw.taxonomies;
+        if !raw.tags.is_empty() {
+            taxonomies.entry("tags".to_string()).or_default().extend(raw.tags);
         }
         Frontmatter {
             title: raw.title,
             date: raw.date,
             slug: raw.slug,
-            tags,
+            taxonomies,
             draft: raw.draft,
             description: raw.description,
         }
@@ -176,7 +175,7 @@ mod tests {
         let input = "---\ntitle: Hello\ntags: [a, b]\ndraft: true\n---\nBody text.\n";
         let parsed = parse(input);
         assert_eq!(parsed.frontmatter.title.as_deref(), Some("Hello"));
-        assert_eq!(parsed.frontmatter.tags, vec!["a", "b"]);
+        assert_eq!(parsed.frontmatter.taxonomies.get("tags").unwrap(), &vec!["a", "b"]);
         assert_eq!(parsed.frontmatter.draft, Some(true));
         assert_eq!(parsed.body.trim(), "Body text.");
     }
@@ -187,7 +186,7 @@ mod tests {
         let parsed = parse(input);
         assert_eq!(parsed.frontmatter.title.as_deref(), Some("Hi"));
         assert_eq!(parsed.frontmatter.date.as_deref(), Some("2024-01-01"));
-        assert_eq!(parsed.frontmatter.tags, vec!["x"]);
+        assert_eq!(parsed.frontmatter.taxonomies.get("tags").unwrap(), &vec!["x"]);
         assert_eq!(
             resolve_date(parsed.frontmatter.date.as_deref(), std::time::SystemTime::UNIX_EPOCH),
             "2024-01-01T00:00:00.000Z"
@@ -196,10 +195,20 @@ mod tests {
 
     #[test]
     fn parses_toml_frontmatter_with_taxonomies() {
-        let input = "+++\ntitle = \"Hi\"\n[taxonomies]\ntags = [\"x\", \"y\"]\n+++\nBody.\n";
+        let input =
+            "+++\ntitle = \"Hi\"\n[taxonomies]\ntags = [\"x\", \"y\"]\nseries = [\"z\"]\n+++\nBody.\n";
         let parsed = parse(input);
         assert_eq!(parsed.frontmatter.title.as_deref(), Some("Hi"));
-        assert_eq!(parsed.frontmatter.tags, vec!["x", "y"]);
+        assert_eq!(parsed.frontmatter.taxonomies.get("tags").unwrap(), &vec!["x", "y"]);
+        assert_eq!(parsed.frontmatter.taxonomies.get("series").unwrap(), &vec!["z"]);
+    }
+
+    #[test]
+    fn top_level_tags_and_taxonomies_table_coexist() {
+        let input = "---\ntags: [a]\ntaxonomies:\n  series: [b]\n---\nBody.\n";
+        let parsed = parse(input);
+        assert_eq!(parsed.frontmatter.taxonomies.get("tags").unwrap(), &vec!["a"]);
+        assert_eq!(parsed.frontmatter.taxonomies.get("series").unwrap(), &vec!["b"]);
     }
 
     #[test]

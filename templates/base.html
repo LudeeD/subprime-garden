@@ -11,12 +11,12 @@
 <body>
 <header class="site-header">
   <div>
-    <a class="site-title" href="/">{{ site.title }}</a>
+    <a class="site-title" href="/">🌷 {{ site.title }}</a>
     {% if site.description %}<p class="site-description">{{ site.description }}</p>{% endif %}
   </div>
   <nav>
     <a href="/archive">archive</a>
-    <a href="/tags">tags</a>
+    {% for taxonomy in site.taxonomies %}<a href="/{{ taxonomy }}">{{ taxonomy }}</a>{% endfor %}
   </nav>
 </header>
 <main>
@@ -24,6 +24,7 @@
 </main>
 <footer class="site-footer">
   <p>{{ site.author }}</p>
+  <p class="site-colophon">Made with subprime-garden.</p>
 </footer>
 </body>
 </html>

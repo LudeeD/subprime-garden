@@ -23,9 +23,11 @@
   <label>Slug (leave blank to auto-generate from the title)<br>
     <input type="text" name="slug" value="{{ slug }}">
   </label>
-  <label>Tags (comma-separated)<br>
-    <input type="text" name="tags" value="{{ tags }}">
+  {% for tax in taxonomies %}
+  <label>{{ tax.name }} (comma-separated)<br>
+    <input type="text" name="tax_{{ tax.name }}" value="{{ tax.value }}">
   </label>
+  {% endfor %}
   {% if not is_new %}
   <label>Created<br>
     <input type="datetime-local" name="created_at" value="{{ created_at }}">

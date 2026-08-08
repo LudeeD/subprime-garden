@@ -233,6 +233,17 @@ pub fn list_all_published_any_kind(conn: &Connection) -> rusqlite::Result<Vec<Po
     rows.collect()
 }
 
+/// Every published page (kind='page'), keyed by slug for template lookups —
+/// see the `pages` template global in `render::render`, which lets any
+/// template embed one by slug (e.g. `{{ pages.about.html|safe }}`).
+pub fn list_published_pages(conn: &Connection) -> rusqlite::Result<Vec<Post>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {SELECT_COLUMNS} FROM posts WHERE status = 'published' AND kind = 'page'"
+    ))?;
+    let rows = stmt.query_map([], Post::from_row)?;
+    rows.collect()
+}
+
 pub fn count_by_status(conn: &Connection, status: PostStatus) -> rusqlite::Result<i64> {
     conn.query_row(
         "SELECT COUNT(*) FROM posts WHERE status = ?1",

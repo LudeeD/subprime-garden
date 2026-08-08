@@ -2,16 +2,16 @@
 {% block title %}{{ post.title }} — {{ site.title }}{% endblock %}
 {% block content %}
 <article class="post">
-  <p class="crumb"><a href="/">..</a>/{{ post.slug }}</p>
   {% if post.published_at_human %}
-  <p><time datetime="{{ post.published_at }}">{{ post.published_at_human }}</time></p>
+  <time class="post-date" datetime="{{ post.published_at }}">{{ post.published_at_human }}</time>
   {% endif %}
   <h1>{{ post.title }}</h1>
   <div class="post-body">{{ post.html|safe }}</div>
-  {% if post.tags %}
+  {% for group in post.taxonomies %}
   <p class="tags">
-    {% for tag in post.tags %}<a href="/tag/{{ tag.slug }}">#{{ tag.name }}</a>{% endfor %}
+    <span class="taxonomy-label">{{ group.taxonomy }}:</span>
+    {% for term in group.terms %}<a href="/{{ group.taxonomy }}/{{ term.slug }}">#{{ term.name }}</a>{% endfor %}
   </p>
-  {% endif %}
+  {% endfor %}
 </article>
 {% endblock %}

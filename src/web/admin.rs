@@ -18,6 +18,7 @@ use crate::media_store;
 use crate::render::{
     self, AdminMediaRow, AdminPostRow, AnalyticsTemplate, DashboardTemplate, LoginTemplate,
     MediaGridTemplate, PostEditTemplate, PostTemplate, PostsListTemplate, SiteView,
+    TaxonomyFieldView,
 };
 
 use super::{net, AppState};
@@ -59,8 +60,6 @@ struct PostForm {
     slug: String,
     markdown: String,
     kind: String,
-    /// Comma-separated tag names.
-    tags: String,
     /// Only present on the edit form — absent (not just empty) on new-post
     /// submissions, which don't render these inputs at all.
     #[serde(default)]
@@ -68,6 +67,23 @@ struct PostForm {
     #[serde(default)]
     published_at: Option<String>,
     csrf_token: String,
+    /// Per-taxonomy comma-separated term lists, one input per taxonomy
+    /// configured in `site.taxonomies`, named `tax_<taxonomy>` in the form
+    /// (see admin/post_edit.html) and caught here by `#[serde(flatten)]`.
+    #[serde(flatten)]
+    rest: std::collections::HashMap<String, String>,
+}
+
+/// Pulls the `tax_<taxonomy>` inputs back out of a submitted `PostForm`,
+/// keeping only taxonomies actually configured in `site.taxonomies` —
+/// defense against a hand-crafted POST creating stray taxonomies.
+fn taxonomy_terms_from_form(form: &PostForm, configured: &[String]) -> Vec<(String, Vec<String>)> {
+    form.rest
+        .iter()
+        .filter_map(|(k, v)| k.strip_prefix("tax_").map(|name| (name.to_string(), v)))
+        .filter(|(name, _)| configured.contains(name))
+        .map(|(name, csv)| (name, split_tag_names(csv)))
+        .collect()
 }
 
 /// Parses an HTML `datetime-local` value (`YYYY-MM-DDTHH:MM`, always UTC —
@@ -109,7 +125,7 @@ async fn login_form(
         csrf_token: token,
         error: None,
     };
-    let body = render::render(&state.templates, &page)?;
+    let body = render::render(&state.db, &state.templates, &page).await?;
     Ok((jar, Html(body)))
 }
 
@@ -138,7 +154,7 @@ async fn login_submit(
             csrf_token: token,
             error: Some("Invalid username or password.".to_string()),
         };
-        let body = render::render(&state.templates, &page)?;
+        let body = render::render(&state.db, &state.templates, &page).await?;
         return Ok((jar, Html(body)).into_response());
     }
 
@@ -184,7 +200,7 @@ async fn dashboard(
         views_7d: week.iter().map(|d| d.views).sum(),
         uniques_7d: week.iter().map(|d| d.uniques).sum(),
     };
-    Ok(Html(render::render(&state.templates, &ctx)?))
+    Ok(Html(render::render(&state.db, &state.templates, &ctx).await?))
 }
 
 async fn admin_analytics(
@@ -231,7 +247,7 @@ async fn admin_analytics(
         dropped_events: state.analytics.dropped_count(),
         feed_hits: state.analytics.feed_hits_count(),
     };
-    Ok(Html(render::render(&state.templates, &ctx)?))
+    Ok(Html(render::render(&state.db, &state.templates, &ctx).await?))
 }
 
 async fn posts_list(
@@ -247,7 +263,7 @@ async fn posts_list(
         csrf_token: session.csrf,
         posts: posts.iter().map(AdminPostRow::from).collect(),
     };
-    Ok(Html(render::render(&state.templates, &ctx)?))
+    Ok(Html(render::render(&state.db, &state.templates, &ctx).await?))
 }
 
 async fn post_new_form(
@@ -265,11 +281,17 @@ async fn post_new_form(
         kind: "post".to_string(),
         status: "draft".to_string(),
         saved: false,
-        tags: String::new(),
+        taxonomies: state
+            .config
+            .site
+            .taxonomies
+            .iter()
+            .map(|name| TaxonomyFieldView { name: name.clone(), value: String::new() })
+            .collect(),
         created_at: String::new(),
         published_at: String::new(),
     };
-    Ok(Html(render::render(&state.templates, &ctx)?))
+    Ok(Html(render::render(&state.db, &state.templates, &ctx).await?))
 }
 
 async fn post_edit_form(
@@ -278,13 +300,16 @@ async fn post_edit_form(
     Path(id): Path<i64>,
     Query(q): Query<SavedQuery>,
 ) -> Result<Html<String>, AppError> {
-    let (post, tags_csv) = db::with_conn(&state.db, move |conn| {
+    let taxonomy_names = state.config.site.taxonomies.clone();
+    let (post, taxonomy_values) = db::with_conn(&state.db, move |conn| {
         let post = posts::get_by_id(conn, id)?;
-        let tags_csv = match &post {
-            Some(_) => crate::db::tags::names_csv_for_post(conn, id)?,
-            None => String::new(),
-        };
-        Ok((post, tags_csv))
+        let mut values = Vec::new();
+        if post.is_some() {
+            for name in &taxonomy_names {
+                values.push((name.clone(), crate::db::taxonomy::names_csv_for_post(conn, name, id)?));
+            }
+        }
+        Ok((post, values))
     })
     .await?;
     let post = post.ok_or(AppError::NotFound)?;
@@ -300,11 +325,14 @@ async fn post_edit_form(
         kind: post.kind.as_str().to_string(),
         status: post.status.as_str().to_string(),
         saved: q.saved.unwrap_or(false),
-        tags: tags_csv,
+        taxonomies: taxonomy_values
+            .into_iter()
+            .map(|(name, value)| TaxonomyFieldView { name, value })
+            .collect(),
         created_at: render::datetime_local(Some(&post.created_at)),
         published_at: render::datetime_local(post.published_at.as_deref()),
     };
-    Ok(Html(render::render(&state.templates, &ctx)?))
+    Ok(Html(render::render(&state.db, &state.templates, &ctx).await?))
 }
 
 async fn post_create(
@@ -319,10 +347,10 @@ async fn post_create(
         return Err(anyhow::anyhow!("title is required").into());
     }
     let kind = PostKind::from_str(&form.kind);
+    let taxonomy_terms = taxonomy_terms_from_form(&form, &state.config.site.taxonomies);
     let markdown_cfg = state.config.markdown.clone();
     let markdown_src = form.markdown;
     let requested_slug = form.slug.trim().to_string();
-    let tag_names = split_tag_names(&form.tags);
 
     let id = db::with_conn(&state.db, move |conn| {
         let slug_source = if requested_slug.is_empty() {
@@ -345,8 +373,10 @@ async fn post_create(
             kind,
         };
         let id = posts::insert(conn, &new)?;
-        let tag_ids = crate::db::tags::find_or_create(conn, &tag_names)?;
-        crate::db::tags::set_post_tags(conn, id, &tag_ids)?;
+        for (name, names) in &taxonomy_terms {
+            let term_ids = crate::db::taxonomy::find_or_create(conn, name, names)?;
+            crate::db::taxonomy::set_post_terms(conn, name, id, &term_ids)?;
+        }
         Ok(id)
     })
     .await?;
@@ -367,10 +397,10 @@ async fn post_update(
     if title.is_empty() {
         return Err(anyhow::anyhow!("title is required").into());
     }
+    let taxonomy_terms = taxonomy_terms_from_form(&form, &state.config.site.taxonomies);
     let markdown_cfg = state.config.markdown.clone();
     let markdown_src = form.markdown;
     let requested_slug = form.slug.trim().to_string();
-    let tag_names = split_tag_names(&form.tags);
     let created_at_input = form.created_at;
     let published_at_input = form.published_at;
 
@@ -406,8 +436,10 @@ async fn post_update(
             published_at,
         };
         posts::update_content(conn, id, &edit)?;
-        let tag_ids = crate::db::tags::find_or_create(conn, &tag_names)?;
-        crate::db::tags::set_post_tags(conn, id, &tag_ids)?;
+        for (name, names) in &taxonomy_terms {
+            let term_ids = crate::db::taxonomy::find_or_create(conn, name, names)?;
+            crate::db::taxonomy::set_post_terms(conn, name, id, &term_ids)?;
+        }
         Ok(true)
     })
     .await?;
@@ -466,22 +498,22 @@ async fn post_preview(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Html<String>, AppError> {
-    let (post, post_tags) = db::with_conn(&state.db, move |conn| {
+    let (post, post_terms) = db::with_conn(&state.db, move |conn| {
         let post = posts::get_by_id(conn, id)?;
-        let tags = match &post {
-            Some(_) => crate::db::tags::for_post(conn, id)?,
+        let terms = match &post {
+            Some(_) => crate::db::taxonomy::all_for_post(conn, id)?,
             None => Vec::new(),
         };
-        Ok((post, tags))
+        Ok((post, terms))
     })
     .await?;
     let post = post.ok_or(AppError::NotFound)?;
 
     let ctx = PostTemplate {
         site: SiteView::from(&state.config.site),
-        post: crate::render::PostView::with_tags(&post, &post_tags),
+        post: crate::render::PostView::with_taxonomies(&post, &post_terms),
     };
-    Ok(Html(render::render(&state.templates, &ctx)?))
+    Ok(Html(render::render(&state.db, &state.templates, &ctx).await?))
 }
 
 async fn media_grid(
@@ -494,7 +526,7 @@ async fn media_grid(
         csrf_token: session.csrf,
         items: items.iter().map(AdminMediaRow::from).collect(),
     };
-    Ok(Html(render::render(&state.templates, &ctx)?))
+    Ok(Html(render::render(&state.db, &state.templates, &ctx).await?))
 }
 
 async fn media_upload(

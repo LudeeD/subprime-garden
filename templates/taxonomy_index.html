@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ taxonomy_label }} — {{ site.title }}{% endblock %}
+{% block content %}
+<h1>{{ taxonomy_label }}</h1>
+<ul class="post-list">
+{% for term in terms %}
+<li class="post-item">
+  <div class="post-header">
+    <a href="/{{ taxonomy }}/{{ term.slug }}" class="post-title-link">#{{ term.name }}</a>
+    <span class="tag-count">{{ term.count }}</span>
+  </div>
+</li>
+{% endfor %}
+</ul>
+{% if not terms %}
+<p class="no-posts">No {{ taxonomy }} yet.</p>
+{% endif %}
+{% endblock %}

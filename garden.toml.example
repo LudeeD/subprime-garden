@@ -9,6 +9,10 @@ base_url = "https://garden.example"
 author = "Your Name"
 timezone = "UTC"
 posts_per_page = 20
+# Taxonomy names posts can be grouped under — each gets a `/<name>` index
+# and `/<name>/:slug` term page. Add more (e.g. "series") and assign terms
+# per post via frontmatter `[taxonomies]`, keyed by name.
+taxonomies = ["tags"]
 
 [server]
 bind = "127.0.0.1:8080"

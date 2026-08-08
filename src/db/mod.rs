@@ -3,7 +3,7 @@ pub mod media;
 mod migrations;
 pub mod models;
 pub mod posts;
-pub mod tags;
+pub mod taxonomy;
 
 pub use migrations::run_migrations;
 

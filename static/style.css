@@ -2,7 +2,8 @@
   --bg: #ffffff;
   --fg: #1a1a1a;
   --muted: #666666;
-  --link: #1155cc;
+  --link: #3468c9;
+  --visited: #6b4fa0;
   --border: #e2e2e2;
   --code-bg: #f4f4f4;
   --code-fg: #1a1a1a;
@@ -13,7 +14,8 @@
     --bg: #16161a;
     --fg: #e8e8e8;
     --muted: #9a9a9a;
-    --link: #8ab4f8;
+    --link: #9cc0f5;
+    --visited: #c3a6e8;
     --border: #33333a;
     --code-bg: #1e1e22;
     --code-fg: #e8e8e8;
@@ -29,7 +31,7 @@ html {
 }
 
 body {
-  max-width: 42rem;
+  max-width: 46rem;
   margin: 0 auto;
   padding: 2rem 1.25rem;
   background: var(--bg);
@@ -45,10 +47,22 @@ h1, h2, h3, h4 {
   font-weight: 600;
 }
 
+h1 { font-size: 1.9rem; }
+h2 { font-size: 1.5rem; }
+h3 { font-size: 1.25rem; }
+h4 { font-size: 1.1rem; }
+
+/* Blue is reserved for genuine content links (prose, tags) — chrome like
+   nav/titles gets its own neutral color further down, so blue reads
+   as "this is a link into content" rather than being everywhere. */
 a {
   color: var(--link);
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+a:visited {
+  color: var(--visited);
 }
 
 a:hover {
@@ -64,15 +78,18 @@ a:hover {
   justify-content: space-between;
   align-items: baseline;
   gap: 1rem;
-  margin-bottom: 2rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--border);
+  margin-bottom: 2.5rem;
 }
 
 .site-title {
+  color: var(--fg);
   font-weight: 700;
   font-size: 1.3rem;
   text-decoration: none;
+}
+
+.site-title:visited {
+  color: var(--fg);
 }
 
 .site-description {
@@ -81,22 +98,33 @@ a:hover {
   font-size: 0.95rem;
 }
 
-.site-header nav a {
+.site-header nav a,
+.site-header nav a:visited {
+  color: var(--fg);
   margin-left: 1rem;
   white-space: nowrap;
+  text-decoration: none;
+}
+
+.site-header nav a:hover {
+  text-decoration: underline;
 }
 
 .site-footer {
-  margin-top: 2.5rem;
-  padding-top: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  margin-top: 3.5rem;
+  padding-top: 1.25rem;
   border-top: 1px solid var(--border);
-  color: var(--muted);
-  font-size: 0.9rem;
+  color: var(--fg);
+  font-size: 0.95rem;
 }
 
-.crumb {
+.site-footer .site-colophon {
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: 0.85rem;
 }
 
 hr {
@@ -110,6 +138,16 @@ time {
   font-size: 0.9rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-style: italic;
+}
+
+.featured-page {
+  margin-bottom: 3rem;
+}
+
+.featured-page h2 {
+  margin-top: 0;
+  margin-bottom: 0.75rem;
+  font-size: 2.1rem;
 }
 
 /* --- listings (index / archive / tag) --- */
@@ -133,10 +171,15 @@ time {
 }
 
 .post-title-link {
+  color: var(--link);
   font-size: 1.2rem;
   font-weight: 600;
   flex: 1;
   text-decoration: none;
+}
+
+.post-title-link:visited {
+  color: var(--visited);
 }
 
 .post-title-link:hover {
@@ -145,6 +188,14 @@ time {
 
 .post-date {
   white-space: nowrap;
+}
+
+/* Single post: date sits top-right, like a dateline on a letter. Scoped to
+   a direct child of .post so it doesn't touch .post-date in listing rows,
+   which stay in their existing flex layout. */
+.post > .post-date {
+  display: block;
+  text-align: right;
 }
 
 .tag-count {
@@ -217,8 +268,45 @@ time {
   text-align: left;
 }
 
+.footnote-reference a {
+  text-decoration: none;
+}
+
+.footnote-reference a:hover {
+  text-decoration: underline;
+}
+
+.footnote-definition {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  margin-top: 0.5rem;
+  padding: 0.1rem 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.footnote-definition:first-of-type {
+  margin-top: 2.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.footnote-definition-label {
+  flex-shrink: 0;
+}
+
+.footnote-definition p {
+  margin: 0;
+}
+
 .tags {
   font-size: 0.9rem;
+}
+
+.taxonomy-label {
+  color: var(--muted);
+  margin-right: 0.4rem;
 }
 
 .tags a {
