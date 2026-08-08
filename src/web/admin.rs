@@ -25,6 +25,7 @@ use super::{net, AppState};
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/admin.css", get(admin_css))
         .route("/login", get(login_form).post(login_submit))
         .route("/logout", post(logout))
         .route("/", get(dashboard))
@@ -112,6 +113,16 @@ struct SavedQuery {
 #[derive(Deserialize)]
 struct StatusQuery {
     status: Option<String>,
+}
+
+/// Serves the admin UI's own stylesheet, baked into the binary — deliberately
+/// not part of `./static`, so a site theme can never affect (or need to
+/// account for) the admin UI. Unauthenticated: the login page needs it too.
+async fn admin_css() -> impl IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/css; charset=utf-8")],
+        render::admin_assets::css(),
+    )
 }
 
 async fn login_form(

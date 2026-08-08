@@ -1,3 +1,4 @@
+pub mod admin_assets;
 pub mod cache;
 pub mod feeds;
 pub mod sparkline;
@@ -38,6 +39,8 @@ pub fn build_env() -> anyhow::Result<minijinja::Environment<'static>> {
         let source = std::fs::read_to_string(path)?;
         env.add_template_owned(name, source)?;
     }
+
+    admin_assets::register(&mut env)?;
 
     Ok(env)
 }
