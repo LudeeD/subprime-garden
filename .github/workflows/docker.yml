@@ -2,7 +2,8 @@ name: docker
 
 on:
   push:
-    tags: ["v*"]
+    # Release tags look like 2026.08.08-a1b2c3d4 (date-commit), not semver.
+    tags: ["[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]-*"]
 
 env:
   # Hardcoded lowercase — GHCR rejects uppercase image paths, and
@@ -92,7 +93,7 @@ jobs:
           images: ${{ env.IMAGE }}
           tags: |
             type=raw,value=latest
-            type=semver,pattern={{version}}
+            type=ref,event=tag
 
       - name: Create manifest list and push
         working-directory: /tmp/digests
