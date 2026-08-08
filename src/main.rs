@@ -9,7 +9,11 @@ mod media_store;
 mod render;
 mod web;
 
+use axum::extract::Request;
+use axum::ServiceExt;
 use clap::Parser;
+use tower::Layer;
+use tower_http::normalize_path::NormalizePathLayer;
 use tracing_subscriber::EnvFilter;
 
 use cli::{Cli, Command};
@@ -97,13 +101,14 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     };
     web::public::warm_cache(&state).await;
     let app = web::build_router(state);
+    let app = NormalizePathLayer::trim_trailing_slash().layer(app);
 
     let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     tracing::info!("listening on {bind_addr}");
 
     axum::serve(
         listener,
-        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        ServiceExt::<Request>::into_make_service_with_connect_info::<std::net::SocketAddr>(app),
     )
     .with_graceful_shutdown(shutdown_signal())
     .await?;
