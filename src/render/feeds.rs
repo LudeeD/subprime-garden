@@ -14,7 +14,7 @@ fn xml_escape(s: &str) -> String {
 /// how we already store `published_at`, so Atom just reuses it as-is).
 fn rfc822(iso: &str) -> String {
     chrono::DateTime::parse_from_rfc3339(iso)
-        .map(|dt| dt.format("%a, %d %b %Y %H:%M:%S GMT").to_string())
+        .map(|dt| dt.with_timezone(&chrono::Utc).format("%a, %d %b %Y %H:%M:%S GMT").to_string())
         .unwrap_or_default()
 }
 
@@ -38,13 +38,16 @@ pub fn atom_feed(site: &SiteView, posts: &[Post]) -> String {
              \x20   <link href=\"{url}\"/>\n\
              \x20   <id>{url}</id>\n\
              \x20   <published>{published}</published>\n\
-             \x20   <updated>{published}</updated>\n\
+             \x20   <updated>{updated}</updated>\n\
              \x20   <summary>{excerpt}</summary>\n\
+             \x20   <content type=\"html\">{content}</content>\n\
              \x20 </entry>\n",
             title = xml_escape(&post.title),
             url = xml_escape(&url),
             published = published,
+            updated = post.updated_at,
             excerpt = xml_escape(&post.excerpt),
+            content = xml_escape(&post.html),
         ));
     }
 
@@ -56,9 +59,11 @@ pub fn atom_feed(site: &SiteView, posts: &[Post]) -> String {
          \x20 <link href=\"{base}/\"/>\n\
          \x20 <id>{base}/</id>\n\
          \x20 <updated>{updated}</updated>\n\
+         \x20 <author><name>{author}</name></author>\n\
          {entries}\
          </feed>\n",
         title = xml_escape(&site.title),
+        author = xml_escape(&site.author),
         base = site.base_url.trim_end_matches('/'),
         updated = updated,
         entries = entries,
@@ -81,17 +86,19 @@ pub fn rss_feed(site: &SiteView, posts: &[Post]) -> String {
              \x20   <guid>{url}</guid>\n\
              \x20   <pubDate>{pub_date}</pubDate>\n\
              \x20   <description>{excerpt}</description>\n\
+             \x20   <content:encoded>{content}</content:encoded>\n\
              \x20 </item>\n",
             title = xml_escape(&post.title),
             url = xml_escape(&url),
             pub_date = pub_date,
             excerpt = xml_escape(&post.excerpt),
+            content = xml_escape(&post.html),
         ));
     }
 
     format!(
         "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n\
-         <rss version=\"2.0\">\n\
+         <rss version=\"2.0\" xmlns:content=\"http://purl.org/rss/1.0/modules/content/\">\n\
          <channel>\n\
          \x20 <title>{title}</title>\n\
          \x20 <link>{base}/</link>\n\
