@@ -5,10 +5,11 @@ use tokio::time::{sleep, Duration};
 
 use crate::db::{self, Pool};
 
-/// Runs once at every UTC midnight: rolls yesterday's raw pageviews into
-/// `daily_stats`, purges raw rows (and their salts) past retention, and
-/// rotates the cached daily salt so the new day's hashes are unlinkable from
-/// the previous one.
+/// Runs at startup and then at every UTC midnight: rolls finished days' raw
+/// pageviews into the daily aggregates, purges raw rows (and their salts)
+/// past retention, and rotates the cached daily salt so the new day's hashes
+/// are unlinkable from the previous one. The startup run catches up on any
+/// midnight the process wasn't running for.
 pub fn spawn(
     pool: Pool,
     raw_retention_days: u32,
@@ -16,8 +17,6 @@ pub fn spawn(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         loop {
-            sleep(duration_until_next_utc_midnight()).await;
-
             if let Err(e) = db::with_conn_mut(&pool, move |conn| {
                 db::analytics::rollup_and_purge(conn, raw_retention_days)
             })
@@ -39,6 +38,8 @@ pub fn spawn(
                 }
                 Err(e) => tracing::error!(error = %e, "failed to rotate daily analytics salt"),
             }
+
+            sleep(duration_until_next_utc_midnight()).await;
         }
     })
 }

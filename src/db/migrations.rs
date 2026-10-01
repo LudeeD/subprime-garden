@@ -8,6 +8,7 @@ fn migrations() -> Migrations<'static> {
         M::up(include_str!("../../migrations/0001_init.sql")),
         M::up(include_str!("../../migrations/0002_taxonomies.sql")),
         M::up(include_str!("../../migrations/0003_drop_content_hash.sql")),
+        M::up(include_str!("../../migrations/0004_daily_totals.sql")),
     ])
 }
 

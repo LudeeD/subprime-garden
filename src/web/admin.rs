@@ -253,11 +253,11 @@ async fn admin_analytics(
         sparkline_90d: crate::render::sparkline::sparkline_svg(&views_series(&series90), 300, 60),
         top_posts: top_posts
             .into_iter()
-            .map(|p| crate::render::CountRow { label: p.path, count: p.views })
+            .map(|p| crate::render::CountRow { label: p.label, count: p.views })
             .collect(),
         top_referrers: top_referrers
             .into_iter()
-            .map(|r| crate::render::CountRow { label: r.path, count: r.views })
+            .map(|r| crate::render::CountRow { label: r.label, count: r.views })
             .collect(),
         dropped_events: state.analytics.dropped_count(),
         feed_hits: state.analytics.feed_hits_count(),
