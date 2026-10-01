@@ -6,7 +6,8 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 
 /// A fully rendered page, ready to serve byte-for-byte. `body`/`etag` are
-/// `Arc<str>` so a cache hit is a pointer clone, not a copy.
+/// `Arc<str>` so reading an entry out of the cache doesn't copy it under the
+/// lock; the body is copied once per response, in `into_response`.
 #[derive(Clone)]
 pub struct CachedPage {
     pub body: std::sync::Arc<str>,
@@ -45,26 +46,45 @@ impl CachedPage {
 /// thing (`invalidate_all`), which is simple, correct, and cheap enough for
 /// a single-writer blog where writes are rare compared to reads.
 pub struct PageCache {
-    inner: RwLock<HashMap<String, CachedPage>>,
+    inner: RwLock<Inner>,
+}
+
+#[derive(Default)]
+struct Inner {
+    pages: HashMap<String, CachedPage>,
+    /// Bumped by every `invalidate_all`, so a render that started before a
+    /// content write can't store its (now stale) result after it.
+    generation: u64,
 }
 
 impl PageCache {
     pub fn new() -> Self {
         PageCache {
-            inner: RwLock::new(HashMap::new()),
+            inner: RwLock::new(Inner::default()),
         }
     }
 
     pub fn get(&self, path: &str) -> Option<CachedPage> {
-        self.inner.read().expect("page cache lock poisoned").get(path).cloned()
+        self.inner.read().expect("page cache lock poisoned").pages.get(path).cloned()
     }
 
-    pub fn insert(&self, path: String, page: CachedPage) {
-        self.inner.write().expect("page cache lock poisoned").insert(path, page);
+    pub fn generation(&self) -> u64 {
+        self.inner.read().expect("page cache lock poisoned").generation
+    }
+
+    /// Stores `page` unless the cache was invalidated since `generation` was
+    /// read — take it before starting the render.
+    pub fn insert(&self, path: String, page: CachedPage, generation: u64) {
+        let mut inner = self.inner.write().expect("page cache lock poisoned");
+        if inner.generation == generation {
+            inner.pages.insert(path, page);
+        }
     }
 
     pub fn invalidate_all(&self) {
-        self.inner.write().expect("page cache lock poisoned").clear();
+        let mut inner = self.inner.write().expect("page cache lock poisoned");
+        inner.pages.clear();
+        inner.generation += 1;
     }
 }
 
@@ -91,6 +111,7 @@ where
         return Ok(cached.into_response(if_none_match));
     }
 
+    let generation = cache.generation();
     let body = render().await?;
     let etag = format!("\"{}\"", blake3::hash(body.as_bytes()).to_hex());
     let cached = CachedPage {
@@ -98,7 +119,7 @@ where
         etag: std::sync::Arc::from(etag.as_str()),
         content_type,
     };
-    cache.insert(path.to_string(), cached.clone());
+    cache.insert(path.to_string(), cached.clone(), generation);
     Ok(cached.into_response(if_none_match))
 }
 
@@ -116,6 +137,7 @@ mod tests {
                 etag: std::sync::Arc::from("\"abc\""),
                 content_type: "text/html",
             },
+            cache.generation(),
         );
         assert!(cache.get("/").is_some());
         assert!(cache.get("/missing").is_none());
@@ -131,8 +153,22 @@ mod tests {
                 etag: std::sync::Arc::from("\"abc\""),
                 content_type: "text/html",
             },
+            cache.generation(),
         );
         cache.invalidate_all();
+        assert!(cache.get("/").is_none());
+    }
+
+    #[tokio::test]
+    async fn render_overtaken_by_an_invalidation_is_not_cached() {
+        let cache = PageCache::new();
+        let response = render_cached(&cache, "/", "text/html", None, || async {
+            cache.invalidate_all(); // a content write lands mid-render
+            Ok("stale".to_string())
+        })
+        .await
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
         assert!(cache.get("/").is_none());
     }
 
