@@ -17,5 +17,6 @@ pub fn run(conn: &Connection, markdown_cfg: &MarkdownConfig) -> anyhow::Result<(
         println!("rerendered: {}", post.slug);
     }
     println!("\n{} posts rerendered", all.len());
+    println!("restart the server to see these changes");
     Ok(())
 }

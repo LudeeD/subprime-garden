@@ -56,6 +56,9 @@ pub fn run(
 
     let verb = if opts.dry_run { "would import" } else { "imported" };
     println!("\n{imported} {verb}, {skipped} skipped, {errors} errors");
+    if imported > 0 && !opts.dry_run {
+        println!("restart the server to see these changes");
+    }
     Ok(())
 }
 
