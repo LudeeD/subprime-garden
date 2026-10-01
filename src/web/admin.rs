@@ -359,7 +359,7 @@ async fn post_create(
 
     let title = form.title.trim().to_string();
     if title.is_empty() {
-        return Err(anyhow::anyhow!("title is required").into());
+        return Err(AppError::BadRequest("title is required".into()));
     }
     let kind = PostKind::from_str(&form.kind);
     let taxonomy_terms = taxonomy_terms_from_form(&form, &state.config.site.taxonomies);
@@ -411,7 +411,7 @@ async fn post_update(
 
     let title = form.title.trim().to_string();
     if title.is_empty() {
-        return Err(anyhow::anyhow!("title is required").into());
+        return Err(AppError::BadRequest("title is required".into()));
     }
     let taxonomy_terms = taxonomy_terms_from_form(&form, &state.config.site.taxonomies);
     let markdown_cfg = state.config.markdown.clone();
@@ -558,7 +558,7 @@ async fn media_upload(
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|e| anyhow::anyhow!("invalid upload: {e}"))?
+        .map_err(|e| AppError::BadRequest(format!("invalid upload: {e}")))?
     {
         match field.name().unwrap_or_default() {
             "csrf_token" => {
@@ -566,7 +566,7 @@ async fn media_upload(
                     field
                         .text()
                         .await
-                        .map_err(|e| anyhow::anyhow!("invalid upload: {e}"))?,
+                        .map_err(|e| AppError::BadRequest(format!("invalid upload: {e}")))?,
                 );
             }
             "file" => {
@@ -575,7 +575,7 @@ async fn media_upload(
                     field
                         .bytes()
                         .await
-                        .map_err(|e| anyhow::anyhow!("invalid upload: {e}"))?
+                        .map_err(|e| AppError::BadRequest(format!("invalid upload: {e}")))?
                         .to_vec(),
                 );
             }
@@ -584,7 +584,7 @@ async fn media_upload(
     }
 
     session.verify_csrf(csrf_token.as_deref().unwrap_or(""))?;
-    let bytes = file_bytes.filter(|b| !b.is_empty()).ok_or_else(|| anyhow::anyhow!("no file uploaded"))?;
+    let bytes = file_bytes.filter(|b| !b.is_empty()).ok_or_else(|| AppError::BadRequest("no file uploaded".into()))?;
     let original_name = file_name.unwrap_or_else(|| "upload".to_string());
 
     let media_dir = state.config.server.media_dir.clone();

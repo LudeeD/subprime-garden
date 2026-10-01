@@ -9,6 +9,10 @@ pub enum AppError {
     Forbidden,
     #[error("too many requests")]
     RateLimited,
+    /// The request itself was wrong (missing title, rejected upload); the
+    /// message is shown to the user as-is.
+    #[error("{0}")]
+    BadRequest(String),
     #[error(transparent)]
     Db(#[from] rusqlite::Error),
     #[error(transparent)]
@@ -25,8 +29,12 @@ impl IntoResponse for AppError {
             AppError::NotFound => StatusCode::NOT_FOUND,
             AppError::Forbidden => StatusCode::FORBIDDEN,
             AppError::RateLimited => StatusCode::TOO_MANY_REQUESTS,
+            AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
+        if let AppError::BadRequest(message) = self {
+            return (status, message).into_response();
+        }
         if status == StatusCode::INTERNAL_SERVER_ERROR {
             tracing::error!(error = %self, "request failed");
         }
