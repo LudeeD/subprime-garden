@@ -13,6 +13,10 @@ Group=subprime-garden
 # afterwards only needs `systemctl restart`, not a rebuild.
 WorkingDirectory=/etc/subprime-garden
 ExecStart=/usr/local/bin/subprime-garden serve --config /etc/subprime-garden/garden.toml
+# `init` writes ./data paths into garden.toml, which would land under the
+# read-only /etc — point them at the one writable directory instead.
+Environment=SUBPRIME_SERVER__DATABASE=/var/lib/subprime-garden/garden.db
+Environment=SUBPRIME_SERVER__MEDIA_DIR=/var/lib/subprime-garden/media
 # Secrets that shouldn't live in the TOML file (password hash, session
 # secret) can go here instead, as SUBPRIME_* env vars — see README.md.
 EnvironmentFile=-/etc/subprime-garden/garden.env
@@ -21,6 +25,7 @@ RestartSec=2
 
 # The binary only ever needs to write under /var/lib/subprime-garden
 # (database, WAL files, media) — everything else is read-only.
+StateDirectory=subprime-garden
 ReadWritePaths=/var/lib/subprime-garden
 NoNewPrivileges=true
 PrivateTmp=true
