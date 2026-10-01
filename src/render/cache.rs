@@ -17,9 +17,14 @@ pub struct CachedPage {
 impl CachedPage {
     fn into_response(self, if_none_match: Option<&str>) -> Response {
         if if_none_match.is_some_and(|inm| inm.contains(&*self.etag)) {
+            // Content-Type rides along so pageview tracking can still tell a
+            // revalidated HTML page from a feed (see `web::middleware`).
             return (
                 StatusCode::NOT_MODIFIED,
-                [(header::ETAG, self.etag.to_string())],
+                [
+                    (header::CONTENT_TYPE, self.content_type.to_string()),
+                    (header::ETAG, self.etag.to_string()),
+                ],
             )
                 .into_response();
         }

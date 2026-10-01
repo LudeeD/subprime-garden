@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use axum::extract::{ConnectInfo, State};
-use axum::http::{header, Method, Request};
+use axum::http::{header, Method, Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::Response;
 
@@ -12,7 +12,7 @@ use super::{net, AppState};
 
 /// Records a pageview for successful, non-admin, HTML responses — everything
 /// else (assets, feeds, sitemap, robots.txt, 404s, admin pages) is excluded
-/// by construction: they either aren't GET+2xx+`text/html`, or live under
+/// by construction: they either aren't GET+2xx/304+`text/html`, or live under
 /// `/admin`. Feeds get their own lightweight aggregate counter instead (see
 /// `AnalyticsHandle::record_feed_hit`), incremented directly in their
 /// handlers.
@@ -67,7 +67,8 @@ fn should_track(method: &Method, path: &str, response: &Response) -> bool {
     if method != Method::GET || path.starts_with("/admin") {
         return false;
     }
-    if !response.status().is_success() {
+    // A 304 is a return visit served from the browser's own copy.
+    if !response.status().is_success() && response.status() != StatusCode::NOT_MODIFIED {
         return false;
     }
     response
