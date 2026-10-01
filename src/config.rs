@@ -20,6 +20,14 @@ pub struct SiteConfig {
     pub taxonomies: Vec<String>,
 }
 
+impl SiteConfig {
+    /// True when `/<slug>` already belongs to a fixed route or a taxonomy
+    /// index, so a post with that slug would be unreachable.
+    pub fn is_reserved_path(&self, slug: &str) -> bool {
+        RESERVED_PATHS.contains(&slug) || self.taxonomies.iter().any(|t| t == slug)
+    }
+}
+
 impl Default for SiteConfig {
     fn default() -> Self {
         Self {

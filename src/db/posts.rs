@@ -1,6 +1,8 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::models::{Post, PostKind, PostStatus};
+use crate::config::SiteConfig;
+use crate::content::slug::slugify;
 
 pub struct NewPost {
     pub slug: String,
@@ -13,8 +15,34 @@ pub struct NewPost {
     pub kind: PostKind,
 }
 
-const SELECT_COLUMNS: &str = "id, slug, title, markdown, html, excerpt, content_hash, status, \
-     kind, created_at, updated_at, published_at";
+const SELECT_COLUMNS: &str =
+    "id, slug, title, markdown, html, excerpt, status, kind, created_at, updated_at, published_at";
+
+/// Appends `-2`, `-3`, ... until the slug is free — neither another post's
+/// nor a path the router already owns (see `SiteConfig::is_reserved_path`).
+/// `exclude_id` lets an existing post keep its own slug while editing.
+pub fn unique_slug(
+    conn: &Connection,
+    site: &SiteConfig,
+    title: &str,
+    exclude_id: Option<i64>,
+) -> rusqlite::Result<String> {
+    let taken = |slug: &str| -> rusqlite::Result<bool> {
+        Ok(site.is_reserved_path(slug) || slug_exists(conn, slug, exclude_id)?)
+    };
+    let base = slugify(title);
+    if !taken(&base)? {
+        return Ok(base);
+    }
+    let mut n = 2;
+    loop {
+        let candidate = format!("{base}-{n}");
+        if !taken(&candidate)? {
+            return Ok(candidate);
+        }
+        n += 1;
+    }
+}
 
 pub fn slug_exists(conn: &Connection, slug: &str, exclude_id: Option<i64>) -> rusqlite::Result<bool> {
     conn.query_row(

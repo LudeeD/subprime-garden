@@ -57,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
             let mut conn = pool.get()?;
             db::run_migrations(&mut conn)?;
             let opts = cli::import::ImportOptions { published, force, dry_run };
-            cli::import::run(&mut conn, &dir, &opts, &config.markdown, &config.site.taxonomies)?;
+            cli::import::run(&mut conn, &dir, &opts, &config.markdown, &config.site)?;
         }
         Command::Export { dir } => {
             let config = Config::load(config_path.as_ref())?;

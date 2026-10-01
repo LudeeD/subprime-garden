@@ -10,7 +10,7 @@ use serde::Deserialize;
 
 use crate::auth::cookie::AdminSession;
 use crate::auth::{self, SessionData};
-use crate::content::{markdown, slug};
+use crate::content::markdown;
 use crate::db::models::{Post, PostKind, PostStatus};
 use crate::db::{self, media, posts};
 use crate::error::AppError;
@@ -366,6 +366,7 @@ async fn post_create(
     let markdown_cfg = state.config.markdown.clone();
     let markdown_src = form.markdown;
     let requested_slug = form.slug.trim().to_string();
+    let config = state.config.clone();
 
     let id = db::with_conn(&state.db, move |conn| {
         let slug_source = if requested_slug.is_empty() {
@@ -373,7 +374,7 @@ async fn post_create(
         } else {
             requested_slug.as_str()
         };
-        let post_slug = slug::unique_slug(conn, slug_source, None)?;
+        let post_slug = posts::unique_slug(conn, &config.site, slug_source, None)?;
         let rendered = markdown::render(&markdown_src, &markdown_cfg, &|filename| {
             media::variant_lookup(conn, filename)
         });
@@ -418,6 +419,7 @@ async fn post_update(
     let requested_slug = form.slug.trim().to_string();
     let created_at_input = form.created_at;
     let published_at_input = form.published_at;
+    let config = state.config.clone();
 
     let found = db::with_conn(&state.db, move |conn| {
         let Some(existing) = posts::get_by_id(conn, id)? else {
@@ -428,7 +430,7 @@ async fn post_update(
         } else {
             requested_slug.as_str()
         };
-        let post_slug = slug::unique_slug(conn, slug_source, Some(id))?;
+        let post_slug = posts::unique_slug(conn, &config.site, slug_source, Some(id))?;
         let rendered = markdown::render(&markdown_src, &markdown_cfg, &|filename| {
             media::variant_lookup(conn, filename)
         });

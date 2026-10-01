@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use rusqlite::Connection;
 
-use crate::config::MarkdownConfig;
+use crate::config::{MarkdownConfig, SiteConfig};
 use crate::content::{frontmatter, markdown, slug};
 use crate::db::media;
 use crate::db::models::{PostKind, PostStatus};
@@ -21,7 +21,7 @@ pub fn run(
     dir: &Path,
     opts: &ImportOptions,
     markdown_cfg: &MarkdownConfig,
-    taxonomies: &[String],
+    site: &SiteConfig,
 ) -> anyhow::Result<()> {
     let files = find_markdown_files(dir)?;
     if files.is_empty() {
@@ -34,7 +34,7 @@ pub fn run(
     let mut errors = 0;
 
     for path in files {
-        match import_one(conn, &path, opts, markdown_cfg, taxonomies) {
+        match import_one(conn, &path, opts, markdown_cfg, site) {
             Ok(Outcome::Inserted(slug)) => {
                 println!("imported:  {slug:<40} {}", path.display());
                 imported += 1;
@@ -70,7 +70,7 @@ fn import_one(
     path: &Path,
     opts: &ImportOptions,
     markdown_cfg: &MarkdownConfig,
-    taxonomies: &[String],
+    site: &SiteConfig,
 ) -> anyhow::Result<Outcome> {
     let raw = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let mtime = std::fs::metadata(path)
@@ -91,6 +91,12 @@ fn import_one(
         Some(s) if !s.trim().is_empty() => slug::slugify(s),
         _ => slug::slugify(&title),
     };
+
+    // Import keeps URLs as written, so unlike the admin form it doesn't
+    // quietly rename — the author picks the new slug.
+    if site.is_reserved_path(&desired_slug) {
+        anyhow::bail!("slug {desired_slug:?} is a reserved path — set a different `slug` in the frontmatter");
+    }
 
     let created_at = frontmatter::resolve_date(parsed.frontmatter.date.as_deref(), mtime);
     let status = match parsed.frontmatter.draft {
@@ -127,7 +133,7 @@ fn import_one(
     let mut term_ids_by_taxonomy = Vec::new();
     let mut unconfigured = Vec::new();
     for (name, names) in &parsed.frontmatter.taxonomies {
-        if !taxonomies.contains(name) {
+        if !site.taxonomies.contains(name) {
             unconfigured.push(name.as_str());
             continue;
         }

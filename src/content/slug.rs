@@ -1,7 +1,3 @@
-use rusqlite::Connection;
-
-use crate::db::posts;
-
 /// Unicode-aware slugify (transliterates non-ASCII where possible, then
 /// lowercases and hyphenates).
 pub fn slugify(title: &str) -> String {
@@ -10,23 +6,6 @@ pub fn slugify(title: &str) -> String {
         "post".to_string()
     } else {
         base
-    }
-}
-
-/// Appends `-2`, `-3`, ... until the slug is free. `exclude_id` lets an
-/// existing post keep its own slug while editing.
-pub fn unique_slug(conn: &Connection, title: &str, exclude_id: Option<i64>) -> rusqlite::Result<String> {
-    let base = slugify(title);
-    if !posts::slug_exists(conn, &base, exclude_id)? {
-        return Ok(base);
-    }
-    let mut n = 2;
-    loop {
-        let candidate = format!("{base}-{n}");
-        if !posts::slug_exists(conn, &candidate, exclude_id)? {
-            return Ok(candidate);
-        }
-        n += 1;
     }
 }
 
