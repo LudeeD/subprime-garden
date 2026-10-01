@@ -16,11 +16,22 @@ pub trait TemplateCtx: Serialize {
     const NAME: &'static str;
 }
 
-pub fn build_env() -> anyhow::Result<minijinja::Environment<'static>> {
+/// Themes live on disk and outlast the binary that scaffolded them, so a
+/// template may reference a variable this version no longer provides (e.g.
+/// `pagination.has_prev`). Chainable undefined makes that render as empty
+/// and falsy instead of failing the whole page.
+pub fn new_env() -> minijinja::Environment<'static> {
     let mut env = minijinja::Environment::new();
+    env.set_undefined_behavior(minijinja::UndefinedBehavior::Chainable);
+    env
+}
+
+pub fn build_env() -> anyhow::Result<minijinja::Environment<'static>> {
+    let mut env = new_env();
     let root = std::path::Path::new("./templates");
 
-    for entry in walkdir::WalkDir::new(root) {
+    // A missing ./templates is reported by `check_required_templates` below.
+    for entry in walkdir::WalkDir::new(root).into_iter().filter(|_| root.is_dir()) {
         let entry = entry?;
         if !entry.file_type().is_file() {
             continue;
@@ -40,6 +51,7 @@ pub fn build_env() -> anyhow::Result<minijinja::Environment<'static>> {
     }
 
     admin_assets::register(&mut env)?;
+    check_required_templates(&env)?;
 
     Ok(env)
 }
@@ -431,4 +443,23 @@ pub struct AnalyticsTemplate {
 }
 impl TemplateCtx for AnalyticsTemplate {
     const NAME: &'static str = "admin/analytics.html";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_theme_from_an_older_version_still_renders() {
+        let mut env = new_env();
+        // What `init` wrote before numbered pages were removed.
+        env.add_template("index.html", "{% if pages.about and not pagination.has_prev %}about{% endif %}home")
+            .unwrap();
+        let ctx = IndexTemplate {
+            site: SiteView::from(&SiteConfig::default()),
+            posts: Vec::new(),
+        };
+        let pages = minijinja::Value::from_serialize(HashMap::from([("about", "x")]));
+        assert_eq!(render(&env, pages, &ctx).unwrap(), "abouthome");
+    }
 }

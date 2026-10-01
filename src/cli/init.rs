@@ -162,21 +162,30 @@ fn resolve_session_secret(doc: &mut toml_edit::DocumentMut, rotate: bool) -> Res
     Ok(())
 }
 
+/// The stock theme plus the admin templates, straight from the binary — what
+/// a freshly `init`ed site renders with. Tests build their env from this
+/// instead of reading `./templates`.
+#[cfg(test)]
+pub fn stock_env() -> minijinja::Environment<'static> {
+    let mut env = crate::render::new_env();
+    for name in StockTemplates::iter() {
+        let file = StockTemplates::get(&name).expect("just listed by iter()");
+        let source = std::str::from_utf8(&file.data).expect("stock template is valid utf-8").to_string();
+        env.add_template_owned(name.to_string(), source).expect("every stock template should parse");
+    }
+    crate::render::admin_assets::register(&mut env).expect("admin templates should parse");
+    env
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     /// The stock templates `theme`/`init` scaffold onto disk must parse as
     /// valid minijinja alongside the baked-in admin templates, since a fresh
     /// site combines both (site templates from disk, admin from the binary).
     #[test]
     fn stock_templates_parse() {
-        let mut env = minijinja::Environment::new();
-        for name in StockTemplates::iter() {
-            let file = StockTemplates::get(&name).expect("just listed by iter()");
-            let source = std::str::from_utf8(&file.data).expect("stock template is valid utf-8").to_string();
-            env.add_template_owned(name.to_string(), source).expect("every stock template should parse");
-        }
-        crate::render::admin_assets::register(&mut env).expect("admin templates should parse");
+        let env = super::stock_env();
+        crate::render::check_required_templates(&env).expect("stock theme has every required template");
+        assert!(crate::render::check_required_templates(&minijinja::Environment::new()).is_err());
     }
 }
