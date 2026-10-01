@@ -82,6 +82,9 @@ fn import_one(
 
     let parsed = frontmatter::parse(&raw).map_err(anyhow::Error::msg)?;
     let (h1_title, body) = frontmatter::extract_h1_title(&parsed.body);
+    // Drop the blank line(s) between frontmatter and text, so an
+    // export/import round trip doesn't grow the body each time.
+    let body = body.trim_start_matches(['\r', '\n']).to_string();
 
     let title = parsed
         .frontmatter
@@ -175,7 +178,7 @@ fn import_one(
                     html: rendered.html,
                     excerpt: rendered.excerpt,
                     status,
-                    kind: PostKind::Post,
+                    kind: PostKind::from_str(parsed.frontmatter.kind.as_deref().unwrap_or("post")),
                     created_at,
                     published_at,
                 },

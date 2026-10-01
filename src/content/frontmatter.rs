@@ -12,7 +12,8 @@ pub struct Frontmatter {
     /// `tags = [...]` shortcut is folded into the "tags" entry.
     pub taxonomies: BTreeMap<String, Vec<String>>,
     pub draft: Option<bool>,
-    pub description: Option<String>,
+    /// `post` (the default) or `page` — written by `export`.
+    pub kind: Option<String>,
 }
 
 pub struct ParsedFile {
@@ -30,7 +31,7 @@ struct RawFrontmatter {
     tags: Vec<String>,
     taxonomies: BTreeMap<String, Vec<String>>,
     draft: Option<bool>,
-    description: Option<String>,
+    kind: Option<String>,
 }
 
 impl From<RawFrontmatter> for Frontmatter {
@@ -45,7 +46,7 @@ impl From<RawFrontmatter> for Frontmatter {
             slug: raw.slug,
             taxonomies,
             draft: raw.draft,
-            description: raw.description,
+            kind: raw.kind,
         }
     }
 }
