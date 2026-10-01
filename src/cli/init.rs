@@ -85,7 +85,7 @@ fn configure(config_path: &Path, force: bool, reset_password: bool) -> Result<()
     }
 
     resolve_password(&mut doc, reset_password)?;
-    resolve_session_secret(&mut doc)?;
+    resolve_session_secret(&mut doc, reset_password)?;
 
     std::fs::write(config_path, doc.to_string())?;
     Ok(())
@@ -142,7 +142,14 @@ fn resolve_password(doc: &mut toml_edit::DocumentMut, force: bool) -> Result<()>
     Ok(())
 }
 
-fn resolve_session_secret(doc: &mut toml_edit::DocumentMut) -> Result<()> {
+/// `rotate` (a password reset) replaces a perfectly good secret too — that
+/// is what logs out every session opened with the old password.
+fn resolve_session_secret(doc: &mut toml_edit::DocumentMut, rotate: bool) -> Result<()> {
+    if rotate {
+        doc["auth"]["session_secret"] = toml_edit::value(crate::auth::random_token());
+        println!("session secret rotated — existing sessions are logged out on the next restart");
+        return Ok(());
+    }
     let current = doc["auth"]["session_secret"].as_str().unwrap_or("").to_string();
     if !needs_secret(&current, PLACEHOLDER_SESSION_SECRET) {
         return Ok(());
