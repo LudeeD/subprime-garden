@@ -92,7 +92,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(public)
         .merge(media)
         .merge(static_files)
-        .nest("/admin", admin::router())
+        .nest("/admin", admin::router(state.config.media.max_upload_bytes))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::track_pageview,

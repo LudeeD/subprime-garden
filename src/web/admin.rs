@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use axum::extract::{ConnectInfo, Multipart, Path, Query, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Multipart, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -23,7 +23,11 @@ use crate::render::{
 
 use super::{net, AppState};
 
-pub fn router() -> Router<AppState> {
+pub fn router(max_upload_bytes: u64) -> Router<AppState> {
+    // axum caps request bodies at 2MB by default; raise it for uploads only,
+    // with headroom for the multipart framing around the file itself.
+    let upload_limit = DefaultBodyLimit::max(max_upload_bytes as usize + 64 * 1024);
+
     Router::new()
         .route("/admin.css", get(admin_css))
         .route("/login", get(login_form).post(login_submit))
@@ -38,7 +42,7 @@ pub fn router() -> Router<AppState> {
         .route("/posts/:id/unpublish", post(post_unpublish))
         .route("/preview/:id", get(post_preview))
         .route("/media", get(media_grid))
-        .route("/media/upload", post(media_upload))
+        .route("/media/upload", post(media_upload).layer(upload_limit))
         .route("/media/:id/delete", post(media_delete))
         .route("/analytics", get(admin_analytics))
 }
