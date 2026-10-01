@@ -5,7 +5,7 @@
 <p class="admin-status-badge">Status: <strong>{{ status }}</strong>{% if is_new %} — new posts are saved as drafts; use "publish" below once it's ready.{% endif %}</p>
 {% if saved %}<p class="flash">Saved{% if status == "draft" %} as draft{% endif %}.</p>{% endif %}
 
-<form method="post" action="{% if is_new %}/admin/posts{% else %}/admin/posts/{{ id }}{% endif %}" id="post-form">
+<form method="post" action="{% if is_new %}/admin/posts{% else %}/admin/posts/{{ id }}{% endif %}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   {% if is_new %}
   <label>Kind<br>
@@ -62,18 +62,5 @@
     <button type="submit" class="link-button">delete</button>
   </form>
 </p>
-
-<script>
-(function () {
-  var form = document.getElementById("post-form");
-  var dirty = false;
-  form.addEventListener("input", function () { dirty = true; });
-  setInterval(function () {
-    if (!dirty) return;
-    dirty = false;
-    fetch(form.action, { method: "POST", body: new FormData(form) });
-  }, 30000);
-})();
-</script>
 {% endif %}
 {% endblock %}
