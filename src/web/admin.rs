@@ -536,7 +536,7 @@ async fn post_preview(
 
     let ctx = PostTemplate {
         site: SiteView::from(&state.config.site),
-        post: crate::render::PostView::with_taxonomies(&post, &post_terms),
+        post: crate::render::PostView::with_taxonomies(&post, &post_terms, &state.config.site.taxonomies),
     };
     Ok(Html(state.render(&ctx)?))
 }

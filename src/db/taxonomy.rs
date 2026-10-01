@@ -42,8 +42,9 @@ fn unique_term_slug(conn: &Connection, taxonomy: &str, name: &str) -> rusqlite::
     }
 }
 
-/// Finds each term by exact name within `taxonomy`, creating it (with a
-/// fresh unique slug) if it doesn't exist yet. Returns term ids in the same
+/// Finds each term by name (ignoring case, so "Rust" and "rust" are one
+/// term) within `taxonomy`, creating it (with a fresh unique slug) if it
+/// doesn't exist yet. Returns term ids in the same
 /// order as `names`, with blanks and duplicates dropped.
 pub fn find_or_create(conn: &Connection, taxonomy: &str, names: &[String]) -> rusqlite::Result<Vec<i64>> {
     let mut ids = Vec::new();
@@ -55,7 +56,7 @@ pub fn find_or_create(conn: &Connection, taxonomy: &str, names: &[String]) -> ru
         }
         let existing: Option<i64> = conn
             .query_row(
-                "SELECT id FROM taxonomy_terms WHERE taxonomy = ?1 AND name = ?2",
+                "SELECT id FROM taxonomy_terms WHERE taxonomy = ?1 AND name = ?2 COLLATE NOCASE",
                 params![taxonomy, name],
                 |row| row.get(0),
             )
@@ -91,6 +92,17 @@ pub fn set_post_terms(conn: &Connection, taxonomy: &str, post_id: i64, term_ids:
             params![post_id, term_id],
         )?;
     }
+    Ok(())
+}
+
+/// Drops terms no post uses any more. Call once a post's terms are fully
+/// written (not between taxonomies — a freshly created term is an orphan
+/// until it's attached).
+pub fn delete_orphans(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "DELETE FROM taxonomy_terms WHERE id NOT IN (SELECT term_id FROM post_taxonomy_terms)",
+        [],
+    )?;
     Ok(())
 }
 

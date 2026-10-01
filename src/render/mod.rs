@@ -167,10 +167,11 @@ impl From<&Post> for PostView {
 impl PostView {
     /// `terms` must already be ordered by taxonomy (see
     /// `taxonomy::all_for_post`) so consecutive equal-taxonomy rows can be
-    /// grouped in a single pass.
-    pub fn with_taxonomies(post: &Post, terms: &[Term]) -> Self {
+    /// grouped in a single pass. Terms in a taxonomy no longer listed in
+    /// `site.taxonomies` are left out — their pages have no route.
+    pub fn with_taxonomies(post: &Post, terms: &[Term], configured: &[String]) -> Self {
         let mut groups: Vec<TaxonomyGroupView> = Vec::new();
-        for term in terms {
+        for term in terms.iter().filter(|t| configured.contains(&t.taxonomy)) {
             match groups.last_mut() {
                 Some(g) if g.taxonomy == term.taxonomy => g.terms.push(TermView::from(term)),
                 _ => groups.push(TaxonomyGroupView {
