@@ -23,6 +23,7 @@ services:
       SUBPRIME_CONFIG: /garden.toml
       SUBPRIME_SERVER__BIND: "0.0.0.0:8080"
       SUBPRIME_SITE__BASE_URL: "https://${SUBPRIME_DOMAIN}"
+      SUBPRIME_SERVER__TRUST_PROXY_HEADERS: "true"
     healthcheck:
       test: ["CMD", "/subprime-garden", "healthcheck"]
       interval: 30s
