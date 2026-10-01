@@ -17,7 +17,7 @@ fn syntax_set() -> &'static SyntaxSet {
 /// mode — syntax highlighting is baked into the HTML at save time (see
 /// `render` below), so it can't react to `prefers-color-scheme` at request
 /// time. To change it, edit this key and run `subprime-garden rerender`
-/// (see THEMING.md).
+/// (see README.md, Theming).
 fn theme() -> &'static Theme {
     THEME.get_or_init(|| {
         let ts = ThemeSet::load_defaults();
