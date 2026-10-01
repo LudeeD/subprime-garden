@@ -52,50 +52,52 @@ impl From<RawFrontmatter> for Frontmatter {
 
 /// Accepts YAML (`---`) or TOML (`+++`) frontmatter, common to Zola, Hugo,
 /// and Jekyll exports. Files with neither delimiter are treated as having no
-/// frontmatter at all — the whole file is the body.
-pub fn parse(content: &str) -> ParsedFile {
+/// frontmatter at all — the whole file is the body. A block that is there
+/// but doesn't parse is an error, not "no frontmatter": silently dropping it
+/// would import the post with the wrong title, date, and draft status.
+pub fn parse(content: &str) -> Result<ParsedFile, String> {
     if let Some(rest) = strip_bom(content).strip_prefix("---") {
         if let Some(rest) = rest.strip_prefix("\r\n").or_else(|| rest.strip_prefix('\n')) {
             if let Some((block, body)) = split_at_delimiter_line(rest, "---") {
-                let raw: RawFrontmatter = serde_yaml::from_str(block).unwrap_or_default();
-                return ParsedFile {
+                let raw: RawFrontmatter = serde_yaml::from_str(block)
+                    .map_err(|e| format!("invalid YAML frontmatter: {e}"))?;
+                return Ok(ParsedFile {
                     frontmatter: raw.into(),
                     body: body.to_string(),
-                };
+                });
             }
         }
     }
     if let Some(rest) = strip_bom(content).strip_prefix("+++") {
         if let Some(rest) = rest.strip_prefix("\r\n").or_else(|| rest.strip_prefix('\n')) {
             if let Some((block, body)) = split_at_delimiter_line(rest, "+++") {
-                return ParsedFile {
-                    frontmatter: parse_toml(block).into(),
+                return Ok(ParsedFile {
+                    frontmatter: parse_toml(block)?.into(),
                     body: body.to_string(),
-                };
+                });
             }
         }
     }
-    ParsedFile {
+    Ok(ParsedFile {
         frontmatter: Frontmatter::default(),
         body: content.to_string(),
-    }
+    })
 }
 
 /// Zola/Hugo write `date` as TOML's native date type (`date = 2024-01-01`,
 /// no quotes), which `RawFrontmatter.date: Option<String>` can't deserialize
 /// directly — that mismatch used to fail the *whole* struct, silently
 /// dropping title/tags/everything, not just the date. Stringify it first.
-fn parse_toml(block: &str) -> RawFrontmatter {
-    let Ok(mut value) = toml::from_str::<toml::Value>(block) else {
-        return RawFrontmatter::default();
-    };
+fn parse_toml(block: &str) -> Result<RawFrontmatter, String> {
+    let invalid = |e: toml::de::Error| format!("invalid TOML frontmatter: {e}");
+    let mut value = toml::from_str::<toml::Value>(block).map_err(invalid)?;
     if let toml::Value::Table(table) = &mut value {
         if let Some(toml::Value::Datetime(dt)) = table.get("date") {
             let s = dt.to_string();
             table.insert("date".to_string(), toml::Value::String(s));
         }
     }
-    value.try_into().unwrap_or_default()
+    value.try_into().map_err(invalid)
 }
 
 fn strip_bom(s: &str) -> &str {
@@ -173,7 +175,7 @@ mod tests {
     #[test]
     fn parses_yaml_frontmatter() {
         let input = "---\ntitle: Hello\ntags: [a, b]\ndraft: true\n---\nBody text.\n";
-        let parsed = parse(input);
+        let parsed = parse(input).unwrap();
         assert_eq!(parsed.frontmatter.title.as_deref(), Some("Hello"));
         assert_eq!(parsed.frontmatter.taxonomies.get("tags").unwrap(), &vec!["a", "b"]);
         assert_eq!(parsed.frontmatter.draft, Some(true));
@@ -183,7 +185,7 @@ mod tests {
     #[test]
     fn toml_bare_date_does_not_wipe_the_rest_of_the_frontmatter() {
         let input = "+++\ntitle = \"Hi\"\ndate = 2024-01-01\n[taxonomies]\ntags = [\"x\"]\n+++\nBody.\n";
-        let parsed = parse(input);
+        let parsed = parse(input).unwrap();
         assert_eq!(parsed.frontmatter.title.as_deref(), Some("Hi"));
         assert_eq!(parsed.frontmatter.date.as_deref(), Some("2024-01-01"));
         assert_eq!(parsed.frontmatter.taxonomies.get("tags").unwrap(), &vec!["x"]);
@@ -197,7 +199,7 @@ mod tests {
     fn parses_toml_frontmatter_with_taxonomies() {
         let input =
             "+++\ntitle = \"Hi\"\n[taxonomies]\ntags = [\"x\", \"y\"]\nseries = [\"z\"]\n+++\nBody.\n";
-        let parsed = parse(input);
+        let parsed = parse(input).unwrap();
         assert_eq!(parsed.frontmatter.title.as_deref(), Some("Hi"));
         assert_eq!(parsed.frontmatter.taxonomies.get("tags").unwrap(), &vec!["x", "y"]);
         assert_eq!(parsed.frontmatter.taxonomies.get("series").unwrap(), &vec!["z"]);
@@ -206,7 +208,7 @@ mod tests {
     #[test]
     fn top_level_tags_and_taxonomies_table_coexist() {
         let input = "---\ntags: [a]\ntaxonomies:\n  series: [b]\n---\nBody.\n";
-        let parsed = parse(input);
+        let parsed = parse(input).unwrap();
         assert_eq!(parsed.frontmatter.taxonomies.get("tags").unwrap(), &vec!["a"]);
         assert_eq!(parsed.frontmatter.taxonomies.get("series").unwrap(), &vec!["b"]);
     }
@@ -214,16 +216,22 @@ mod tests {
     #[test]
     fn accepts_published_at_alias_for_date() {
         let input = "---\npublished_at: 2024-01-15\n---\nBody.\n";
-        let parsed = parse(input);
+        let parsed = parse(input).unwrap();
         assert_eq!(parsed.frontmatter.date.as_deref(), Some("2024-01-15"));
     }
 
     #[test]
     fn no_frontmatter_is_whole_file_as_body() {
         let input = "Just a plain markdown file.\n";
-        let parsed = parse(input);
+        let parsed = parse(input).unwrap();
         assert!(parsed.frontmatter.title.is_none());
         assert_eq!(parsed.body, input);
+    }
+
+    #[test]
+    fn broken_frontmatter_is_an_error_not_an_empty_one() {
+        assert!(parse("---\ntitle: Hello\ntags: not-a-list\n---\nBody.\n").is_err());
+        assert!(parse("+++\ntitle = \"Hi\"\ndraft = \"yes\"\n+++\nBody.\n").is_err());
     }
 
     #[test]

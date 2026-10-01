@@ -80,7 +80,7 @@ fn import_one(
         .and_then(|m| m.modified())
         .unwrap_or(std::time::SystemTime::now());
 
-    let parsed = frontmatter::parse(&raw);
+    let parsed = frontmatter::parse(&raw).map_err(anyhow::Error::msg)?;
     let (h1_title, body) = frontmatter::extract_h1_title(&parsed.body);
 
     let title = parsed
