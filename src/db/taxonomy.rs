@@ -164,8 +164,8 @@ pub fn get_by_slug(conn: &Connection, taxonomy: &str, slug: &str) -> rusqlite::R
     .optional()
 }
 
-const POST_COLUMNS: &str = "p.id, p.slug, p.title, p.markdown, p.html, p.excerpt, p.content_hash, \
-     p.status, p.kind, p.created_at, p.updated_at, p.published_at";
+const POST_COLUMNS: &str = "p.id, p.slug, p.title, p.markdown, p.html, p.excerpt, p.status, p.kind, \
+     p.created_at, p.updated_at, p.published_at";
 
 pub fn list_published_posts_for_term(
     conn: &Connection,

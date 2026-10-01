@@ -386,7 +386,6 @@ async fn post_create(
             markdown: markdown_src,
             html: rendered.html,
             excerpt: rendered.excerpt,
-            content_hash: rendered.content_hash,
             status: PostStatus::Draft,
             kind,
         };
@@ -452,7 +451,6 @@ async fn post_update(
             markdown: markdown_src,
             html: rendered.html,
             excerpt: rendered.excerpt,
-            content_hash: rendered.content_hash,
             created_at,
             published_at,
         };

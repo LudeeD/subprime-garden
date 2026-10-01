@@ -28,7 +28,6 @@ fn theme() -> &'static Theme {
 pub struct Rendered {
     pub html: String,
     pub excerpt: String,
-    pub content_hash: String,
 }
 
 /// Renders markdown to HTML once, at write time — requests never invoke this.
@@ -67,13 +66,8 @@ pub fn render(
     let html = add_lazy_image_loading(&html);
 
     let excerpt = derive_excerpt(markdown);
-    let content_hash = blake3::hash(html.as_bytes()).to_hex().to_string();
 
-    Rendered {
-        html,
-        excerpt,
-        content_hash,
-    }
+    Rendered { html, excerpt }
 }
 
 /// Gives every heading a stable, unique, unicode-aware id for anchor links.
@@ -385,12 +379,5 @@ mod tests {
             &no_variants,
         );
         assert_eq!(r.excerpt, "This is the first paragraph.");
-    }
-
-    #[test]
-    fn content_hash_is_stable_for_identical_html() {
-        let a = render("# Same\n\nBody.", &cfg(), &no_variants);
-        let b = render("# Same\n\nBody.", &cfg(), &no_variants);
-        assert_eq!(a.content_hash, b.content_hash);
     }
 }

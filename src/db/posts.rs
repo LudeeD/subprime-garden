@@ -10,7 +10,6 @@ pub struct NewPost {
     pub markdown: String,
     pub html: String,
     pub excerpt: String,
-    pub content_hash: String,
     pub status: PostStatus,
     pub kind: PostKind,
 }
@@ -59,15 +58,14 @@ pub fn insert(conn: &Connection, new: &NewPost) -> rusqlite::Result<i64> {
         None
     };
     conn.execute(
-        "INSERT INTO posts (slug, title, markdown, html, excerpt, content_hash, status, kind, published_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO posts (slug, title, markdown, html, excerpt, status, kind, published_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             new.slug,
             new.title,
             new.markdown,
             new.html,
             new.excerpt,
-            new.content_hash,
             new.status.as_str(),
             new.kind.as_str(),
             published_at,
@@ -84,7 +82,6 @@ pub struct ImportPost {
     pub markdown: String,
     pub html: String,
     pub excerpt: String,
-    pub content_hash: String,
     pub status: PostStatus,
     pub kind: PostKind,
     pub created_at: String,
@@ -93,16 +90,15 @@ pub struct ImportPost {
 
 pub fn insert_imported(conn: &Connection, new: &ImportPost) -> rusqlite::Result<i64> {
     conn.execute(
-        "INSERT INTO posts (slug, title, markdown, html, excerpt, content_hash, status, kind,
+        "INSERT INTO posts (slug, title, markdown, html, excerpt, status, kind,
              created_at, updated_at, published_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?10)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9)",
         params![
             new.slug,
             new.title,
             new.markdown,
             new.html,
             new.excerpt,
-            new.content_hash,
             new.status.as_str(),
             new.kind.as_str(),
             new.created_at,
@@ -112,18 +108,12 @@ pub fn insert_imported(conn: &Connection, new: &ImportPost) -> rusqlite::Result<
     Ok(conn.last_insert_rowid())
 }
 
-/// Rebuilds only the derived HTML/excerpt/hash for a post — used by
-/// `rerender`, which must not touch slug, title, or timestamps.
-pub fn update_rendered(
-    conn: &Connection,
-    id: i64,
-    html: &str,
-    excerpt: &str,
-    content_hash: &str,
-) -> rusqlite::Result<()> {
+/// Rebuilds only the derived HTML/excerpt for a post — used by `rerender`,
+/// which must not touch slug, title, or timestamps.
+pub fn update_rendered(conn: &Connection, id: i64, html: &str, excerpt: &str) -> rusqlite::Result<()> {
     conn.execute(
-        "UPDATE posts SET html = ?1, excerpt = ?2, content_hash = ?3 WHERE id = ?4",
-        params![html, excerpt, content_hash, id],
+        "UPDATE posts SET html = ?1, excerpt = ?2 WHERE id = ?3",
+        params![html, excerpt, id],
     )?;
     Ok(())
 }
@@ -134,7 +124,6 @@ pub struct PostEdit {
     pub markdown: String,
     pub html: String,
     pub excerpt: String,
-    pub content_hash: String,
     pub created_at: String,
     pub published_at: Option<String>,
 }
@@ -142,15 +131,14 @@ pub struct PostEdit {
 pub fn update_content(conn: &Connection, id: i64, edit: &PostEdit) -> rusqlite::Result<()> {
     conn.execute(
         "UPDATE posts SET slug = ?1, title = ?2, markdown = ?3, html = ?4, excerpt = ?5,
-             content_hash = ?6, created_at = ?7, published_at = ?8, updated_at = ?9
-         WHERE id = ?10",
+             created_at = ?6, published_at = ?7, updated_at = ?8
+         WHERE id = ?9",
         params![
             edit.slug,
             edit.title,
             edit.markdown,
             edit.html,
             edit.excerpt,
-            edit.content_hash,
             edit.created_at,
             edit.published_at,
             now(),
