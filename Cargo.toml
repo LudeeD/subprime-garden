@@ -16,7 +16,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "fs"
 axum = { version = "0.7", features = ["multipart"] }
 axum-extra = { version = "0.9", features = ["cookie-private"] }
 cookie = { version = "0.18", features = ["key-expansion"] }
-tower = "0.4"
+tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["compression-br", "compression-gzip", "trace", "fs", "set-header", "normalize-path"] }
 
 # config

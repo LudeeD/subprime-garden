@@ -2,6 +2,8 @@ pub mod admin;
 mod middleware;
 pub mod net;
 pub mod public;
+#[cfg(test)]
+mod tests;
 
 use std::sync::{Arc, RwLock};
 
