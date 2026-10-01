@@ -15,10 +15,13 @@ pub struct NewMedia {
     pub variant_filename: Option<String>,
 }
 
-pub fn insert(conn: &Connection, new: &NewMedia) -> rusqlite::Result<i64> {
+/// Filenames are content hashes, so a conflict means these exact bytes are
+/// already recorded — re-uploading is a no-op, not an error.
+pub fn insert(conn: &Connection, new: &NewMedia) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO media (filename, original_name, mime, bytes, width, height, variant_filename)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT(filename) DO NOTHING",
         params![
             new.filename,
             new.original_name,
@@ -29,7 +32,7 @@ pub fn insert(conn: &Connection, new: &NewMedia) -> rusqlite::Result<i64> {
             new.variant_filename,
         ],
     )?;
-    Ok(conn.last_insert_rowid())
+    Ok(())
 }
 
 pub fn get_by_id(conn: &Connection, id: i64) -> rusqlite::Result<Option<Media>> {
