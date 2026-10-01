@@ -172,38 +172,10 @@ pub fn datetime_local(iso: Option<&str>) -> String {
     }
 }
 
-/// Prev/next links for a paginated listing. `page` is 1-indexed.
-#[derive(Serialize)]
-pub struct PaginationView {
-    pub has_prev: bool,
-    pub has_next: bool,
-    pub prev_url: String,
-    pub next_url: String,
-}
-
-impl PaginationView {
-    pub fn new(page: u32, total_pages: u32, base_path: &str) -> Self {
-        let page_url = |n: u32| {
-            if n <= 1 {
-                base_path.to_string()
-            } else {
-                format!("{base_path}page/{n}")
-            }
-        };
-        PaginationView {
-            has_prev: page > 1,
-            has_next: page < total_pages,
-            prev_url: page_url(page.saturating_sub(1)),
-            next_url: page_url(page + 1),
-        }
-    }
-}
-
 #[derive(Serialize)]
 pub struct IndexTemplate {
     pub site: SiteView,
     pub posts: Vec<PostView>,
-    pub pagination: PaginationView,
 }
 impl TemplateCtx for IndexTemplate {
     const NAME: &'static str = "index.html";

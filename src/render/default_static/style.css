@@ -317,8 +317,3 @@ time {
 .tags a:hover {
   text-decoration: underline;
 }
-
-.pagination {
-  margin-top: 2rem;
-  text-align: center;
-}

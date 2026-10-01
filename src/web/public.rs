@@ -7,71 +7,34 @@ use crate::error::AppError;
 use crate::render::cache::render_cached;
 use crate::render::feeds;
 use crate::render::{
-    self, ArchiveTemplate, IndexTemplate, PaginationView, PostTemplate, PostView, SiteView,
-    TaxonomyIndexTemplate, TaxonomyTermTemplate, TermCountView,
+    self, ArchiveTemplate, IndexTemplate, PostTemplate, PostView, SiteView, TaxonomyIndexTemplate,
+    TaxonomyTermTemplate, TermCountView,
 };
 
 use super::AppState;
-
-async fn render_template<T: crate::render::TemplateCtx>(
-    db: &db::Pool,
-    env: &minijinja::Environment<'_>,
-    ctx: &T,
-) -> Result<String, AppError> {
-    crate::render::render(db, env, ctx).await
-}
 
 fn if_none_match(headers: &HeaderMap) -> Option<&str> {
     headers.get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok())
 }
 
-async fn render_index(
-    state: &AppState,
-    page: u32,
-    cache_key: &str,
-    inm: Option<&str>,
-) -> Result<Response, AppError> {
-    if page == 0 {
-        return Err(AppError::NotFound);
-    }
-    render_cached(&state.page_cache, cache_key, "text/html; charset=utf-8", inm, || async {
-        let per_page = state.config.site.posts_per_page;
-        let offset = (page - 1) * per_page;
+/// Hands the template every published post — how many the home page
+/// actually lists is the theme's call (the stock `index.html` slices it).
+pub async fn index(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, AppError> {
+    render_cached(
+        &state.page_cache,
+        "/",
+        "text/html; charset=utf-8",
+        if_none_match(&headers),
+        || async {
+            let posts = db::with_conn(&state.db, posts::list_all_published).await?;
 
-        let (posts, total) = db::with_conn(&state.db, move |conn| {
-            let posts = posts::list_published(conn, per_page, offset)?;
-            let total = posts::count_published(conn)?;
-            Ok((posts, total))
-        })
-        .await?;
-
-        let total_pages = ((total as u32).saturating_sub(1) / per_page.max(1)) + 1;
-
-        render_template(
-            &state.db,
-            &state.templates,
-            &IndexTemplate {
+            state.render(&IndexTemplate {
                 site: SiteView::from(&state.config.site),
                 posts: posts.iter().map(PostView::from).collect(),
-                pagination: PaginationView::new(page, total_pages, "/"),
-            },
-        )
-        .await
-    })
+            })
+        },
+    )
     .await
-}
-
-pub async fn index(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, AppError> {
-    render_index(&state, 1, "/", if_none_match(&headers)).await
-}
-
-pub async fn index_page(
-    State(state): State<AppState>,
-    Path(page): Path<u32>,
-    headers: HeaderMap,
-) -> Result<Response, AppError> {
-    let key = format!("/page/{page}");
-    render_index(&state, page, &key, if_none_match(&headers)).await
 }
 
 pub async fn show_post(
@@ -99,15 +62,10 @@ pub async fn show_post(
             .await?;
             let post = post.ok_or(AppError::NotFound)?;
 
-            render_template(
-                &state.db,
-                &state.templates,
-                &PostTemplate {
-                    site: SiteView::from(&state.config.site),
-                    post: PostView::with_taxonomies(&post, &post_terms),
-                },
-            )
-            .await
+            state.render(&PostTemplate {
+                site: SiteView::from(&state.config.site),
+                post: PostView::with_taxonomies(&post, &post_terms, &state.config.site.taxonomies),
+            })
         },
     )
     .await
@@ -121,15 +79,10 @@ pub async fn archive(State(state): State<AppState>, headers: HeaderMap) -> Resul
         if_none_match(&headers),
         || async {
             let posts = db::with_conn(&state.db, posts::list_all_published).await?;
-            render_template(
-                &state.db,
-                &state.templates,
-                &ArchiveTemplate {
-                    site: SiteView::from(&state.config.site),
-                    posts: posts.iter().map(PostView::from).collect(),
-                },
-            )
-            .await
+            state.render(&ArchiveTemplate {
+                site: SiteView::from(&state.config.site),
+                posts: posts.iter().map(PostView::from).collect(),
+            })
         },
     )
     .await
@@ -160,18 +113,13 @@ pub async fn taxonomy_term(
             .await?;
             let term = term.ok_or(AppError::NotFound)?;
 
-            render_template(
-                &state.db,
-                &state.templates,
-                &TaxonomyTermTemplate {
-                    site: SiteView::from(&state.config.site),
-                    taxonomy: taxonomy_name.clone(),
-                    taxonomy_label: render::capitalize(&taxonomy_name),
-                    term_name: term.name,
-                    posts: posts.iter().map(PostView::from).collect(),
-                },
-            )
-            .await
+            state.render(&TaxonomyTermTemplate {
+                site: SiteView::from(&state.config.site),
+                taxonomy: taxonomy_name.clone(),
+                taxonomy_label: render::capitalize(&taxonomy_name),
+                term_name: term.name,
+                posts: posts.iter().map(PostView::from).collect(),
+            })
         },
     )
     .await
@@ -191,17 +139,12 @@ pub async fn taxonomy_index(
         || async {
             let tax = taxonomy_name.clone();
             let terms = db::with_conn(&state.db, move |conn| taxonomy::list_all_with_counts(conn, &tax)).await?;
-            render_template(
-                &state.db,
-                &state.templates,
-                &TaxonomyIndexTemplate {
-                    site: SiteView::from(&state.config.site),
-                    taxonomy: taxonomy_name.clone(),
-                    taxonomy_label: render::capitalize(&taxonomy_name),
-                    terms: terms.iter().map(TermCountView::from).collect(),
-                },
-            )
-            .await
+            state.render(&TaxonomyIndexTemplate {
+                site: SiteView::from(&state.config.site),
+                taxonomy: taxonomy_name.clone(),
+                taxonomy_label: render::capitalize(&taxonomy_name),
+                terms: terms.iter().map(TermCountView::from).collect(),
+            })
         },
     )
     .await

@@ -201,14 +201,6 @@ pub fn list_published(conn: &Connection, limit: u32, offset: u32) -> rusqlite::R
     rows.collect()
 }
 
-pub fn count_published(conn: &Connection) -> rusqlite::Result<i64> {
-    conn.query_row(
-        "SELECT COUNT(*) FROM posts WHERE status = 'published' AND kind = 'post'",
-        [],
-        |row| row.get(0),
-    )
-}
-
 /// Every published post (kind='post'), newest first, uncapped — the archive
 /// page and feeds, which don't paginate.
 pub fn list_all_published(conn: &Connection) -> rusqlite::Result<Vec<Post>> {

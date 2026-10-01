@@ -41,7 +41,6 @@ impl FromRef<AppState> for Key {
 pub fn build_router(state: AppState) -> Router {
     let mut public = Router::new()
         .route("/", get(public::index))
-        .route("/page/:n", get(public::index_page))
         .route("/archive", get(public::archive))
         .route("/tag/:slug", get(public::legacy_tag_redirect))
         .route("/feed.xml", get(public::feed_atom))

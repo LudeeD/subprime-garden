@@ -12,8 +12,6 @@ pub struct SiteConfig {
     pub description: String,
     pub base_url: String,
     pub author: String,
-    pub timezone: String,
-    pub posts_per_page: u32,
     /// Taxonomy names content can be grouped under (Zola calls these the
     /// same thing) — each gets a `/<name>` index and `/<name>/:slug` term
     /// page. Posts assign terms per taxonomy in frontmatter, either
@@ -29,8 +27,6 @@ impl Default for SiteConfig {
             description: String::new(),
             base_url: "http://localhost:8080".into(),
             author: String::new(),
-            timezone: "UTC".into(),
-            posts_per_page: 20,
             taxonomies: vec!["tags".into()],
         }
     }
