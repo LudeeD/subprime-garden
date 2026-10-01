@@ -171,7 +171,7 @@ fn process_images<'a>(
                 };
                 let html = format!(
                     "<picture><source srcset=\"/media/{variant_filename}\" type=\"image/webp\">\
-                     <img loading=\"lazy\" decoding=\"async\" src=\"{}\" alt=\"{}\"{title_attr}></picture>",
+                     <img src=\"{}\" alt=\"{}\"{title_attr}></picture>",
                     escape_attr(&dest),
                     escape_attr(&alt),
                 );
@@ -362,6 +362,7 @@ mod tests {
         assert!(r.html.contains(r#"type="image/webp""#));
         assert!(r.html.contains(r#"src="/media/photo.png""#));
         assert!(r.html.contains(r#"alt="a photo""#));
+        assert_eq!(r.html.matches(r#"loading="lazy""#).count(), 1);
     }
 
     #[test]
