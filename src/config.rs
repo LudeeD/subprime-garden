@@ -150,7 +150,9 @@ pub enum ConfigError {
          config."
     )]
     PlaintextPassword,
-    #[error("auth.username is empty — set [auth] username in the config or SUBPRIME_AUTH__USERNAME")]
+    #[error(
+        "auth.username is empty — set [auth] username in the config or SUBPRIME_AUTH__USERNAME"
+    )]
     MissingUsername,
     #[error(
         "auth.session_secret is empty or too short (need at least 32 bytes) — set [auth] \
@@ -168,13 +170,30 @@ pub enum ConfigError {
     ReservedTaxonomyName(String),
     #[error("site.taxonomies has {0:?} listed more than once")]
     DuplicateTaxonomyName(String),
+    #[error("auth.password_hash is the default one, should be replaced first")]
+    RejectDefaultPasswordHash,
+    #[error("auth.session_secret is the default one, should be replaced first")]
+    RejectDefaultSessionSecret,
 }
 
-/// Top-level paths already claimed by other routes — a taxonomy name can't
-/// reuse one without shadowing it.
-const RESERVED_TAXONOMY_NAMES: &[&str] = &[
-    "archive", "tag", "page", "feed.xml", "rss.xml", "sitemap.xml", "robots.txt", "healthz",
-    "media", "static", "admin",
+// Unset markers from garden.toml.example — `init` treats them the same as
+// empty, and `validate` refuses to start with either still in place.
+pub const PLACEHOLDER_PASSWORD_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$REPLACE$ME";
+pub const PLACEHOLDER_SESSION_SECRET: &str = "replace-with-at-least-32-random-bytes";
+
+/// Top-level paths already claimed by other routes — a taxonomy name or post
+/// slug can't reuse one without being shadowed by it.
+const RESERVED_PATHS: &[&str] = &[
+    "archive",
+    "tag",
+    "feed.xml",
+    "rss.xml",
+    "sitemap.xml",
+    "robots.txt",
+    "healthz",
+    "media",
+    "static",
+    "admin",
 ];
 
 impl Config {
@@ -206,8 +225,14 @@ impl Config {
         if !self.auth.password_hash.starts_with("$argon2") {
             return Err(ConfigError::PlaintextPassword);
         }
+        if self.auth.password_hash == PLACEHOLDER_PASSWORD_HASH {
+            return Err(ConfigError::RejectDefaultPasswordHash);
+        }
         if self.auth.session_secret.len() < 32 {
             return Err(ConfigError::WeakSessionSecret);
+        }
+        if self.auth.session_secret == PLACEHOLDER_SESSION_SECRET {
+            return Err(ConfigError::RejectDefaultSessionSecret);
         }
         self.bind_addr()
             .map_err(|_| ConfigError::InvalidBind(self.server.bind.clone()))?;
@@ -215,11 +240,13 @@ impl Config {
         let mut seen = std::collections::HashSet::new();
         for name in &self.site.taxonomies {
             if name.is_empty()
-                || !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
             {
                 return Err(ConfigError::InvalidTaxonomyName(name.clone()));
             }
-            if RESERVED_TAXONOMY_NAMES.contains(&name.as_str()) {
+            if RESERVED_PATHS.contains(&name.as_str()) {
                 return Err(ConfigError::ReservedTaxonomyName(name.clone()));
             }
             if !seen.insert(name.clone()) {
@@ -249,5 +276,31 @@ impl Config {
                 self.server.bind
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid() -> Config {
+        let mut config = Config::default();
+        config.auth.username = "owner".into();
+        config.auth.password_hash = "$argon2id$not-the-placeholder".into();
+        config.auth.session_secret = "x".repeat(32);
+        config
+    }
+
+    #[test]
+    fn placeholder_secrets_are_rejected() {
+        assert!(valid().validate().is_ok());
+
+        let mut config = valid();
+        config.auth.password_hash = PLACEHOLDER_PASSWORD_HASH.into();
+        assert!(matches!(config.validate(), Err(ConfigError::RejectDefaultPasswordHash)));
+
+        let mut config = valid();
+        config.auth.session_secret = PLACEHOLDER_SESSION_SECRET.into();
+        assert!(matches!(config.validate(), Err(ConfigError::RejectDefaultSessionSecret)));
     }
 }

@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use rust_embed::Embed;
 
 use crate::cli::hash_password;
+use crate::config::{PLACEHOLDER_PASSWORD_HASH, PLACEHOLDER_SESSION_SECRET};
 
 #[derive(Embed)]
 #[folder = "src/render/default_templates/"]
@@ -15,10 +16,6 @@ struct StockTemplates;
 struct StockStatic;
 
 const GARDEN_TOML_EXAMPLE: &str = include_str!("../../garden.toml.example");
-
-// Unset markers from GARDEN_TOML_EXAMPLE — treated the same as empty.
-const PLACEHOLDER_PASSWORD_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$REPLACE$ME";
-const PLACEHOLDER_SESSION_SECRET: &str = "replace-with-at-least-32-random-bytes";
 
 pub fn run(dir: &Path, force: bool, reset_password: bool) -> Result<()> {
     theme(dir, force)?;
