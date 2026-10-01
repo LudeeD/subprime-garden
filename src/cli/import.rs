@@ -127,12 +127,9 @@ fn import_one(
         });
     }
 
-    let mut rendered = markdown::render(&body, markdown_cfg, &|filename| media::variant_lookup(conn, filename));
-    if let Some(description) = &parsed.frontmatter.description {
-        if !description.trim().is_empty() {
-            rendered.excerpt = description.trim().to_string();
-        }
-    }
+    // Post row and taxonomy terms land together or not at all.
+    let tx = conn.unchecked_transaction()?;
+    let rendered = markdown::render(&body, markdown_cfg, &|filename| media::variant_lookup(conn, filename));
     let mut term_ids_by_taxonomy = Vec::new();
     let mut unconfigured = Vec::new();
     for (name, names) in &parsed.frontmatter.taxonomies {
@@ -191,6 +188,8 @@ fn import_one(
     for (name, ids) in &term_ids_by_taxonomy {
         taxonomy::set_post_terms(conn, name, post_id, ids)?;
     }
+    taxonomy::delete_orphans(conn)?;
+    tx.commit()?;
 
     Ok(outcome)
 }

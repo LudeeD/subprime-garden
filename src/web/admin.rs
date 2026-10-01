@@ -369,6 +369,8 @@ async fn post_create(
     let config = state.config.clone();
 
     let id = db::with_conn(&state.db, move |conn| {
+        // Post row and taxonomy terms land together or not at all.
+        let tx = conn.unchecked_transaction()?;
         let slug_source = if requested_slug.is_empty() {
             title.as_str()
         } else {
@@ -393,6 +395,7 @@ async fn post_create(
             let term_ids = crate::db::taxonomy::find_or_create(conn, name, names)?;
             crate::db::taxonomy::set_post_terms(conn, name, id, &term_ids)?;
         }
+        tx.commit()?;
         Ok(id)
     })
     .await?;
@@ -422,6 +425,7 @@ async fn post_update(
     let config = state.config.clone();
 
     let found = db::with_conn(&state.db, move |conn| {
+        let tx = conn.unchecked_transaction()?;
         let Some(existing) = posts::get_by_id(conn, id)? else {
             return Ok(false);
         };
@@ -457,6 +461,8 @@ async fn post_update(
             let term_ids = crate::db::taxonomy::find_or_create(conn, name, names)?;
             crate::db::taxonomy::set_post_terms(conn, name, id, &term_ids)?;
         }
+        crate::db::taxonomy::delete_orphans(conn)?;
+        tx.commit()?;
         Ok(true)
     })
     .await?;
