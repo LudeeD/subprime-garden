@@ -3,7 +3,7 @@ mod middleware;
 pub mod net;
 pub mod public;
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use axum::extract::{FromRef, Path, State};
 use axum::http::{header, HeaderMap, HeaderValue};
@@ -19,6 +19,8 @@ use crate::analytics::AnalyticsHandle;
 use crate::auth::ratelimit::RateLimiter;
 use crate::config::Config;
 use crate::db::Pool;
+use crate::error::AppError;
+use crate::render;
 use crate::render::cache::PageCache;
 
 #[derive(Clone)]
@@ -30,6 +32,24 @@ pub struct AppState {
     pub analytics: Arc<AnalyticsHandle>,
     pub page_cache: Arc<PageCache>,
     pub templates: Arc<minijinja::Environment<'static>>,
+    /// The `pages` template global (see `render::load_pages`).
+    pub pages: Arc<RwLock<minijinja::Value>>,
+}
+
+impl AppState {
+    /// Call after every content write (and once at startup): reloads the
+    /// `pages` template global and drops every cached page.
+    pub async fn content_changed(&self) -> Result<(), AppError> {
+        let pages = crate::db::with_conn(&self.db, render::load_pages).await?;
+        *self.pages.write().expect("pages lock poisoned") = pages;
+        self.page_cache.invalidate_all();
+        Ok(())
+    }
+
+    pub fn render<T: render::TemplateCtx>(&self, ctx: &T) -> Result<String, AppError> {
+        let pages = self.pages.read().expect("pages lock poisoned").clone();
+        render::render(&self.templates, pages, ctx)
+    }
 }
 
 impl FromRef<AppState> for Key {

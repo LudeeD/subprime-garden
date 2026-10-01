@@ -140,7 +140,7 @@ async fn login_form(
         csrf_token: token,
         error: None,
     };
-    let body = render::render(&state.db, &state.templates, &page).await?;
+    let body = state.render(&page)?;
     Ok((jar, Html(body)))
 }
 
@@ -169,7 +169,7 @@ async fn login_submit(
             csrf_token: token,
             error: Some("Invalid username or password.".to_string()),
         };
-        let body = render::render(&state.db, &state.templates, &page).await?;
+        let body = state.render(&page)?;
         return Ok((jar, Html(body)).into_response());
     }
 
@@ -215,7 +215,7 @@ async fn dashboard(
         views_7d: week.iter().map(|d| d.views).sum(),
         uniques_7d: week.iter().map(|d| d.uniques).sum(),
     };
-    Ok(Html(render::render(&state.db, &state.templates, &ctx).await?))
+    Ok(Html(state.render(&ctx)?))
 }
 
 async fn admin_analytics(
@@ -262,7 +262,7 @@ async fn admin_analytics(
         dropped_events: state.analytics.dropped_count(),
         feed_hits: state.analytics.feed_hits_count(),
     };
-    Ok(Html(render::render(&state.db, &state.templates, &ctx).await?))
+    Ok(Html(state.render(&ctx)?))
 }
 
 async fn posts_list(
@@ -278,7 +278,7 @@ async fn posts_list(
         csrf_token: session.csrf,
         posts: posts.iter().map(AdminPostRow::from).collect(),
     };
-    Ok(Html(render::render(&state.db, &state.templates, &ctx).await?))
+    Ok(Html(state.render(&ctx)?))
 }
 
 async fn post_new_form(
@@ -306,7 +306,7 @@ async fn post_new_form(
         created_at: String::new(),
         published_at: String::new(),
     };
-    Ok(Html(render::render(&state.db, &state.templates, &ctx).await?))
+    Ok(Html(state.render(&ctx)?))
 }
 
 async fn post_edit_form(
@@ -347,7 +347,7 @@ async fn post_edit_form(
         created_at: render::datetime_local(Some(&post.created_at)),
         published_at: render::datetime_local(post.published_at.as_deref()),
     };
-    Ok(Html(render::render(&state.db, &state.templates, &ctx).await?))
+    Ok(Html(state.render(&ctx)?))
 }
 
 async fn post_create(
@@ -396,7 +396,7 @@ async fn post_create(
         Ok(id)
     })
     .await?;
-    state.page_cache.invalidate_all();
+    state.content_changed().await?;
 
     Ok(Redirect::to(&format!("/admin/posts/{id}/edit?saved=true")))
 }
@@ -463,7 +463,7 @@ async fn post_update(
     if !found {
         return Err(AppError::NotFound);
     }
-    state.page_cache.invalidate_all();
+    state.content_changed().await?;
 
     Ok(Redirect::to(&format!("/admin/posts/{id}/edit?saved=true")))
 }
@@ -475,8 +475,12 @@ async fn post_delete(
     Form(form): Form<CsrfOnly>,
 ) -> Result<Redirect, AppError> {
     session.verify_csrf(&form.csrf_token)?;
-    db::with_conn(&state.db, move |conn| posts::delete(conn, id)).await?;
-    state.page_cache.invalidate_all();
+    db::with_conn(&state.db, move |conn| {
+        posts::delete(conn, id)?;
+        crate::db::taxonomy::delete_orphans(conn)
+    })
+    .await?;
+    state.content_changed().await?;
     Ok(Redirect::to("/admin/posts"))
 }
 
@@ -491,7 +495,7 @@ async fn post_publish(
         posts::set_status(conn, id, PostStatus::Published)
     })
     .await?;
-    state.page_cache.invalidate_all();
+    state.content_changed().await?;
     Ok(Redirect::to(&format!("/admin/posts/{id}/edit")))
 }
 
@@ -506,7 +510,7 @@ async fn post_unpublish(
         posts::set_status(conn, id, PostStatus::Draft)
     })
     .await?;
-    state.page_cache.invalidate_all();
+    state.content_changed().await?;
     Ok(Redirect::to(&format!("/admin/posts/{id}/edit")))
 }
 
@@ -530,7 +534,7 @@ async fn post_preview(
         site: SiteView::from(&state.config.site),
         post: crate::render::PostView::with_taxonomies(&post, &post_terms),
     };
-    Ok(Html(render::render(&state.db, &state.templates, &ctx).await?))
+    Ok(Html(state.render(&ctx)?))
 }
 
 async fn media_grid(
@@ -543,7 +547,7 @@ async fn media_grid(
         csrf_token: session.csrf,
         items: items.iter().map(AdminMediaRow::from).collect(),
     };
-    Ok(Html(render::render(&state.db, &state.templates, &ctx).await?))
+    Ok(Html(state.render(&ctx)?))
 }
 
 async fn media_upload(

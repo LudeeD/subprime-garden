@@ -10,7 +10,6 @@ use serde::Serialize;
 use crate::config::SiteConfig;
 use crate::db::models::{Media, Post};
 use crate::db::taxonomy::Term;
-use crate::db::Pool;
 use crate::error::AppError;
 
 pub trait TemplateCtx: Serialize {
@@ -45,21 +44,50 @@ pub fn build_env() -> anyhow::Result<minijinja::Environment<'static>> {
     Ok(env)
 }
 
-/// Renders `ctx` with the template named by `T::NAME`. Every template also
-/// gets a `pages` global merged in alongside `ctx` — every published page
-/// (`kind = "page"`), keyed by slug — so any template can embed one by name
-/// (e.g. `{% if pages.about %}{{ pages.about.html|safe }}{% endif %}`) with
-/// no Rust or config change needed to add or move an embed.
-pub async fn render<T: TemplateCtx>(db: &Pool, env: &minijinja::Environment<'_>, ctx: &T) -> Result<String, AppError> {
-    let pages = crate::db::with_conn(db, crate::db::posts::list_published_pages).await?;
+/// Fails at startup, with a way out, when the theme on disk lacks a template
+/// a handler renders by name — rather than a 500 on that route's first hit.
+/// `theme` without `--force` only writes files that aren't there yet.
+pub fn check_required_templates(env: &minijinja::Environment<'_>) -> anyhow::Result<()> {
+    for name in [
+        IndexTemplate::NAME,
+        PostTemplate::NAME,
+        ArchiveTemplate::NAME,
+        TaxonomyTermTemplate::NAME,
+        TaxonomyIndexTemplate::NAME,
+    ] {
+        if env.get_template(name).is_err() {
+            anyhow::bail!(
+                "template `{name}` is missing from ./templates — run `subprime-garden theme` \
+                 to add the stock templates that aren't there yet"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Every published page (`kind = "page"`), keyed by slug, as the `pages`
+/// template global — see `render`. Loaded once and kept in `AppState`,
+/// which reloads it on every content write.
+pub fn load_pages(conn: &rusqlite::Connection) -> rusqlite::Result<minijinja::Value> {
+    let pages = crate::db::posts::list_published_pages(conn)?;
     let pages_by_slug: HashMap<String, PostView> =
         pages.iter().map(|p| (p.slug.clone(), PostView::from(p))).collect();
+    Ok(minijinja::Value::from_serialize(&pages_by_slug))
+}
 
-    let render = || -> Result<String, minijinja::Error> {
-        let tmpl = env.get_template(T::NAME)?;
-        tmpl.render(minijinja::context! { pages => pages_by_slug, ..minijinja::Value::from_serialize(ctx) })
-    };
-    render().map_err(|e| anyhow::anyhow!("template render error: {e}").into())
+/// Renders `ctx` with the template named by `T::NAME`. Every template also
+/// gets the `pages` global merged in alongside `ctx`, so any template can
+/// embed a page by slug (e.g.
+/// `{% if pages.about %}{{ pages.about.html|safe }}{% endif %}`) with no Rust
+/// or config change needed to add or move an embed.
+pub fn render<T: TemplateCtx>(
+    env: &minijinja::Environment<'_>,
+    pages: minijinja::Value,
+    ctx: &T,
+) -> Result<String, AppError> {
+    env.get_template(T::NAME)
+        .and_then(|tmpl| tmpl.render(minijinja::context! { pages => pages, ..minijinja::Value::from_serialize(ctx) }))
+        .map_err(|e| anyhow::anyhow!("template render error: {e}").into())
 }
 
 #[derive(Serialize)]

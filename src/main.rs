@@ -98,7 +98,9 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         analytics: std::sync::Arc::new(analytics_handle),
         page_cache: std::sync::Arc::new(render::cache::PageCache::new()),
         templates,
+        pages: Default::default(),
     };
+    state.content_changed().await?;
     web::public::warm_cache(&state).await;
     let app = web::build_router(state);
     let app = NormalizePathLayer::trim_trailing_slash().layer(app);
