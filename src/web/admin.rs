@@ -589,8 +589,17 @@ async fn media_upload(
 
     let media_dir = state.config.server.media_dir.clone();
     let max_bytes = state.config.media.max_upload_bytes;
-    let stored = media_store::store(&media_dir, &bytes, &original_name, max_bytes)
-        .map_err(|e| anyhow::anyhow!("upload rejected: {e}"))?;
+    // Decoding and resizing is slow, CPU-bound work — like the DB calls, it
+    // stays off the request threads.
+    let stored = tokio::task::spawn_blocking(move || {
+        media_store::store(&media_dir, &bytes, &original_name, max_bytes)
+    })
+    .await
+    .expect("media worker thread panicked")
+    .map_err(|e| match e {
+        media_store::MediaError::Io(e) => AppError::Other(e.into()),
+        rejected => AppError::BadRequest(format!("upload rejected: {rejected}")),
+    })?;
 
     db::with_conn(&state.db, move |conn| {
         media::insert(
