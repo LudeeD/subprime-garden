@@ -1,6 +1,10 @@
+use std::collections::HashMap;
+
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::content::slug::slugify;
+use crate::db::models::Post;
+use crate::db::posts::SELECT_COLUMNS;
 
 #[derive(Debug, Clone)]
 pub struct Term {
@@ -146,14 +150,15 @@ pub struct TermCount {
     pub count: i64,
 }
 
-/// Every term in `taxonomy` with at least one published post, most-used first.
+/// Every term in `taxonomy` with at least one published item (of any
+/// collection), most-used first.
 pub fn list_all_with_counts(conn: &Connection, taxonomy: &str) -> rusqlite::Result<Vec<TermCount>> {
     let mut stmt = conn.prepare(
         "SELECT t.name, t.slug, COUNT(*) as cnt
          FROM taxonomy_terms t
          JOIN post_taxonomy_terms pt ON pt.term_id = t.id
          JOIN posts p ON p.id = pt.post_id
-         WHERE p.status = 'published' AND p.kind = 'post' AND t.taxonomy = ?1
+         WHERE p.status = 'published' AND t.taxonomy = ?1
          GROUP BY t.id
          ORDER BY cnt DESC, t.name",
     )?;
@@ -176,25 +181,37 @@ pub fn get_by_slug(conn: &Connection, taxonomy: &str, slug: &str) -> rusqlite::R
     .optional()
 }
 
-const POST_COLUMNS: &str = "p.id, p.slug, p.title, p.markdown, p.html, p.excerpt, p.status, p.kind, \
-     p.created_at, p.updated_at, p.published_at";
-
-pub fn list_published_posts_for_term(
-    conn: &Connection,
-    term_id: i64,
-    limit: u32,
-    offset: u32,
-) -> rusqlite::Result<Vec<crate::db::models::Post>> {
+/// Every published item with the term, across all collections, newest first.
+pub fn list_published_for_term(conn: &Connection, term_id: i64) -> rusqlite::Result<Vec<Post>> {
     let mut stmt = conn.prepare(&format!(
-        "SELECT {POST_COLUMNS} FROM posts p
-         JOIN post_taxonomy_terms pt ON pt.post_id = p.id
-         WHERE pt.term_id = ?1 AND p.status = 'published' AND p.kind = 'post'
-         ORDER BY p.published_at DESC
-         LIMIT ?2 OFFSET ?3"
+        "SELECT {SELECT_COLUMNS} FROM posts
+         WHERE status = 'published'
+           AND id IN (SELECT post_id FROM post_taxonomy_terms WHERE term_id = ?1)
+         ORDER BY published_at DESC"
     ))?;
-    let rows = stmt.query_map(
-        params![term_id, limit, offset],
-        crate::db::models::Post::from_row,
-    )?;
+    let rows = stmt.query_map(params![term_id], Post::from_row)?;
     rows.collect()
+}
+
+/// Every post's terms, keyed by post id, each list ordered like
+/// `all_for_post` — loaded once per content change so item views can carry
+/// their terms in every context without a query per item.
+pub fn all_by_post(conn: &Connection) -> rusqlite::Result<HashMap<i64, Vec<Term>>> {
+    let mut stmt = conn.prepare(
+        "SELECT pt.post_id, t.id, t.taxonomy, t.name, t.slug FROM taxonomy_terms t
+         JOIN post_taxonomy_terms pt ON pt.term_id = t.id
+         ORDER BY t.taxonomy, t.name",
+    )?;
+    let mut by_post: HashMap<i64, Vec<Term>> = HashMap::new();
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let term = Term {
+            id: row.get(1)?,
+            taxonomy: row.get(2)?,
+            name: row.get(3)?,
+            slug: row.get(4)?,
+        };
+        by_post.entry(row.get(0)?).or_default().push(term);
+    }
+    Ok(by_post)
 }

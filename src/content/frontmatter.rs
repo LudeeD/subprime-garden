@@ -12,8 +12,10 @@ pub struct Frontmatter {
     /// `tags = [...]` shortcut is folded into the "tags" entry.
     pub taxonomies: BTreeMap<String, Vec<String>>,
     pub draft: Option<bool>,
-    /// `post` (the default) or `page` — written by `export`.
-    pub kind: Option<String>,
+    /// Name of a `[[collections]]` entry; import defaults it to `posts`.
+    pub collection: Option<String>,
+    /// The collection's typed fields, checked against its schema on import.
+    pub fields: serde_json::Map<String, serde_json::Value>,
 }
 
 pub struct ParsedFile {
@@ -25,13 +27,13 @@ pub struct ParsedFile {
 #[serde(default)]
 struct RawFrontmatter {
     title: Option<String>,
-    #[serde(alias = "published_at")]
     date: Option<String>,
     slug: Option<String>,
     tags: Vec<String>,
     taxonomies: BTreeMap<String, Vec<String>>,
     draft: Option<bool>,
-    kind: Option<String>,
+    collection: Option<String>,
+    fields: serde_json::Map<String, serde_json::Value>,
 }
 
 impl From<RawFrontmatter> for Frontmatter {
@@ -46,7 +48,8 @@ impl From<RawFrontmatter> for Frontmatter {
             slug: raw.slug,
             taxonomies,
             draft: raw.draft,
-            kind: raw.kind,
+            collection: raw.collection,
+            fields: raw.fields,
         }
     }
 }
@@ -88,17 +91,26 @@ pub fn parse(content: &str) -> Result<ParsedFile, String> {
 /// Zola/Hugo write `date` as TOML's native date type (`date = 2024-01-01`,
 /// no quotes), which `RawFrontmatter.date: Option<String>` can't deserialize
 /// directly — that mismatch used to fail the *whole* struct, silently
-/// dropping title/tags/everything, not just the date. Stringify it first.
+/// dropping title/tags/everything, not just the date. Stringify it first,
+/// along with any date-typed collection field (`[fields] finished = ...`).
 fn parse_toml(block: &str) -> Result<RawFrontmatter, String> {
     let invalid = |e: toml::de::Error| format!("invalid TOML frontmatter: {e}");
     let mut value = toml::from_str::<toml::Value>(block).map_err(invalid)?;
     if let toml::Value::Table(table) = &mut value {
-        if let Some(toml::Value::Datetime(dt)) = table.get("date") {
-            let s = dt.to_string();
-            table.insert("date".to_string(), toml::Value::String(s));
+        stringify_datetimes(table);
+        if let Some(toml::Value::Table(fields)) = table.get_mut("fields") {
+            stringify_datetimes(fields);
         }
     }
     value.try_into().map_err(invalid)
+}
+
+fn stringify_datetimes(table: &mut toml::Table) {
+    for (_, value) in table.iter_mut() {
+        if let toml::Value::Datetime(dt) = value {
+            *value = toml::Value::String(dt.to_string());
+        }
+    }
 }
 
 fn strip_bom(s: &str) -> &str {
@@ -215,10 +227,16 @@ mod tests {
     }
 
     #[test]
-    fn accepts_published_at_alias_for_date() {
-        let input = "---\npublished_at: 2024-01-15\n---\nBody.\n";
+    fn parses_collection_and_fields() {
+        let input = "---\ncollection: books\nfields:\n  rating: 5\n  finished: 2026-09-14\n---\nBody.\n";
         let parsed = parse(input).unwrap();
-        assert_eq!(parsed.frontmatter.date.as_deref(), Some("2024-01-15"));
+        assert_eq!(parsed.frontmatter.collection.as_deref(), Some("books"));
+        assert_eq!(parsed.frontmatter.fields["rating"], 5);
+        assert_eq!(parsed.frontmatter.fields["finished"], "2026-09-14");
+
+        let input = "+++\ncollection = \"books\"\n[fields]\nfinished = 2026-09-14\n+++\nBody.\n";
+        let parsed = parse(input).unwrap();
+        assert_eq!(parsed.frontmatter.fields["finished"], "2026-09-14");
     }
 
     #[test]

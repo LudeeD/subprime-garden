@@ -1,21 +1,23 @@
 {% extends "admin/base.html" %}
-{% block title %}{% if is_new %}New post{% else %}Edit — {{ title }}{% endif %} — {{ site.title }}{% endblock %}
+{% block title %}{% if is_new %}New in {{ collection }}{% else %}Edit — {{ title }}{% endif %} — {{ site.title }}{% endblock %}
 {% block content %}
-<h1>{% if is_new %}New post{% else %}Edit post{% endif %}</h1>
+<h1>{% if is_new %}New in {{ collection }}{% else %}Edit{% endif %}</h1>
+{% if is_new and collections|length > 1 %}
+<p>New in: {% for c in collections %}{% if c == collection %}<strong>{{ c }}</strong>{% else %}<a href="/admin/posts/new?collection={{ c }}">{{ c }}</a>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+{% endif %}
 <p class="admin-status-badge">Status: <strong>{{ status }}</strong>{% if is_new %} — new posts are saved as drafts; use "publish" below once it's ready.{% endif %}</p>
 {% if saved %}<p class="flash">Saved{% if status == "draft" %} as draft{% endif %}.</p>{% endif %}
 
 <form method="post" action="{% if is_new %}/admin/posts{% else %}/admin/posts/{{ id }}{% endif %}">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
   {% if is_new %}
-  <label>Kind<br>
-    <select name="kind">
-      <option value="post" selected>post</option>
-      <option value="page">page</option>
+  <input type="hidden" name="collection" value="{{ collection }}">
+  {% else %}
+  <label>Collection (moving keeps the fields below, so clear any the new collection doesn't have)<br>
+    <select name="collection">
+      {% for c in collections %}<option value="{{ c }}"{% if c == collection %} selected{% endif %}>{{ c }}</option>{% endfor %}
     </select>
   </label>
-  {% else %}
-  <input type="hidden" name="kind" value="{{ kind }}">
   {% endif %}
   <label>Title<br>
     <input type="text" name="title" value="{{ title }}" required>
@@ -23,6 +25,18 @@
   <label>Slug (leave blank to auto-generate from the title)<br>
     <input type="text" name="slug" value="{{ slug }}">
   </label>
+  {% for field in fields %}
+  <label>{{ field.name }}<br>
+    {% if field.input == "choice" or field.input == "media" %}
+    <select name="field_{{ field.name }}">
+      <option value=""{% if not field.value %} selected{% endif %}>—</option>
+      {% for option in field.options %}<option value="{{ option }}"{% if option == field.value %} selected{% endif %}>{{ option }}</option>{% endfor %}
+    </select>
+    {% else %}
+    <input type="{{ field.input }}" name="field_{{ field.name }}" value="{{ field.value }}">
+    {% endif %}
+  </label>
+  {% endfor %}
   {% for tax in taxonomies %}
   <label>{{ tax.name }} (comma-separated)<br>
     <input type="text" name="tax_{{ tax.name }}" value="{{ tax.value }}">
@@ -57,7 +71,7 @@
   </form>
   {% endif %}
   ·
-  <form class="inline-form" method="post" action="/admin/posts/{{ id }}/delete" onsubmit="return confirm('Delete this post?');">
+  <form class="inline-form" method="post" action="/admin/posts/{{ id }}/delete" onsubmit="return confirm('Delete this item?');">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <button type="submit" class="link-button">delete</button>
   </form>

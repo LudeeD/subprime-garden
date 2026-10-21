@@ -12,6 +12,28 @@ author = "Your Name"
 # per post via frontmatter `[taxonomies]`, keyed by name.
 taxonomies = ["tags"]
 
+# Collections are the kinds of content on the site. Every item lives at
+# /<slug> (slugs are unique across collections), and every collection gets a
+# list page at /<name>. `in_feed` puts its items on the home page and in the
+# feeds. `sort` is "<key> [asc|desc]" — published_at (the default, desc),
+# title, or one of the collection's fields. Fields are typed: text, int,
+# date (YYYY-MM-DD), url, media (an uploaded file) or { choice = [...] }.
+[[collections]]
+name = "posts"
+in_feed = true
+
+[[collections]]
+name = "pages"
+
+# [[collections]]
+# name = "books"
+# sort = "finished desc"
+# fields.author = "text"
+# fields.rating = "int"
+# fields.finished = "date"
+# fields.cover = "media"
+# fields.shelf = { choice = ["read", "reading", "want-to-read"] }
+
 [server]
 bind = "127.0.0.1:8080"
 database = "./data/garden.db"

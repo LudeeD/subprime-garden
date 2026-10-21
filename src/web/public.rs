@@ -1,24 +1,28 @@
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Response};
 
 use crate::db::{self, posts, taxonomy};
 use crate::error::AppError;
 use crate::render::cache::render_cached;
 use crate::render::feeds;
 use crate::render::{
-    self, ArchiveTemplate, IndexTemplate, PostTemplate, PostView, SiteView, TaxonomyIndexTemplate,
+    self, CollectionTemplate, CollectionView, IndexTemplate, SiteView, TaxonomyIndexTemplate,
     TaxonomyTermTemplate, TermCountView,
 };
 
 use super::AppState;
 
+/// How many items the feeds carry.
+const FEED_LENGTH: u32 = 20;
+
 fn if_none_match(headers: &HeaderMap) -> Option<&str> {
     headers.get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok())
 }
 
-/// Hands the template every published post — how many the home page
-/// actually lists is the theme's call (the stock `index.html` slices it).
+/// Hands the template every published item of the `in_feed` collections —
+/// how many the home page actually lists is the theme's call (the stock
+/// `index.html` slices it).
 pub async fn index(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, AppError> {
     render_cached(
         &state.page_cache,
@@ -26,18 +30,21 @@ pub async fn index(State(state): State<AppState>, headers: HeaderMap) -> Result<
         "text/html; charset=utf-8",
         if_none_match(&headers),
         || async {
-            let posts = db::with_conn(&state.db, posts::list_all_published).await?;
+            let feed = state.config.feed_collections();
+            let items = db::with_conn(&state.db, move |conn| posts::list_published_in(conn, &feed, u32::MAX)).await?;
 
             state.render(&IndexTemplate {
-                site: SiteView::from(&state.config.site),
-                posts: posts.iter().map(PostView::from).collect(),
+                site: SiteView::from(&*state.config),
+                items: state.content().items(&state.config, &items),
             })
         },
     )
     .await
 }
 
-pub async fn show_post(
+/// Any published item, whatever its collection, with that collection's
+/// entry template.
+pub async fn show_item(
     State(state): State<AppState>,
     Path(slug): Path<String>,
     headers: HeaderMap,
@@ -49,40 +56,45 @@ pub async fn show_post(
         "text/html; charset=utf-8",
         if_none_match(&headers),
         || async {
-            let (post, post_terms) = db::with_conn(&state.db, move |conn| {
-                let post = posts::get_by_slug(conn, &slug, false)?;
-                match post {
-                    Some(post) => {
-                        let terms = taxonomy::all_for_post(conn, post.id)?;
-                        Ok((Some(post), terms))
-                    }
-                    None => Ok((None, Vec::new())),
-                }
-            })
-            .await?;
-            let post = post.ok_or(AppError::NotFound)?;
-
-            state.render(&PostTemplate {
-                site: SiteView::from(&state.config.site),
-                post: PostView::with_taxonomies(&post, &post_terms, &state.config.site.taxonomies),
-            })
+            let post = db::with_conn(&state.db, move |conn| posts::get_by_slug(conn, &slug, false))
+                .await?
+                .ok_or(AppError::NotFound)?;
+            state.render_entry(&post)
         },
     )
     .await
 }
 
-pub async fn archive(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, AppError> {
+/// A collection's list page — every published item, in the collection's
+/// `sort` order, unpaginated.
+pub async fn collection(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    name: String,
+) -> Result<Response, AppError> {
+    let cache_key = format!("/{name}");
     render_cached(
         &state.page_cache,
-        "/archive",
+        &cache_key,
         "text/html; charset=utf-8",
         if_none_match(&headers),
         || async {
-            let posts = db::with_conn(&state.db, posts::list_all_published).await?;
-            state.render(&ArchiveTemplate {
-                site: SiteView::from(&state.config.site),
-                posts: posts.iter().map(PostView::from).collect(),
-            })
+            let collection = state.config.collection(&name).ok_or(AppError::NotFound)?.clone();
+            let items = {
+                let collection = collection.clone();
+                db::with_conn(&state.db, move |conn| posts::list_collection(conn, &collection)).await?
+            };
+            state.render_first(
+                &render::collection_templates(&collection.name),
+                &CollectionTemplate {
+                    site: SiteView::from(&*state.config),
+                    collection: CollectionView {
+                        label: render::capitalize(&collection.name),
+                        name: collection.name.clone(),
+                    },
+                    items: state.content().items(&state.config, &items),
+                },
+            )
         },
     )
     .await
@@ -102,23 +114,23 @@ pub async fn taxonomy_term(
         if_none_match(&headers),
         || async {
             let tax = taxonomy_name.clone();
-            let (term, posts) = db::with_conn(&state.db, move |conn| {
+            let (term, items) = db::with_conn(&state.db, move |conn| {
                 let term = taxonomy::get_by_slug(conn, &tax, &slug)?;
-                let posts = match &term {
-                    Some(t) => taxonomy::list_published_posts_for_term(conn, t.id, u32::MAX, 0)?,
+                let items = match &term {
+                    Some(t) => taxonomy::list_published_for_term(conn, t.id)?,
                     None => Vec::new(),
                 };
-                Ok((term, posts))
+                Ok((term, items))
             })
             .await?;
             let term = term.ok_or(AppError::NotFound)?;
 
             state.render(&TaxonomyTermTemplate {
-                site: SiteView::from(&state.config.site),
+                site: SiteView::from(&*state.config),
                 taxonomy: taxonomy_name.clone(),
                 taxonomy_label: render::capitalize(&taxonomy_name),
                 term_name: term.name,
-                posts: posts.iter().map(PostView::from).collect(),
+                items: state.content().items(&state.config, &items),
             })
         },
     )
@@ -140,7 +152,7 @@ pub async fn taxonomy_index(
             let tax = taxonomy_name.clone();
             let terms = db::with_conn(&state.db, move |conn| taxonomy::list_all_with_counts(conn, &tax)).await?;
             state.render(&TaxonomyIndexTemplate {
-                site: SiteView::from(&state.config.site),
+                site: SiteView::from(&*state.config),
                 taxonomy: taxonomy_name.clone(),
                 taxonomy_label: render::capitalize(&taxonomy_name),
                 terms: terms.iter().map(TermCountView::from).collect(),
@@ -150,12 +162,6 @@ pub async fn taxonomy_index(
     .await
 }
 
-/// `/tag/:slug` predates the taxonomy system, back when "tags" was the only
-/// one. Permanent redirect to the namespaced route so old links keep working.
-pub async fn legacy_tag_redirect(Path(slug): Path<String>) -> Redirect {
-    Redirect::permanent(&format!("/tags/{slug}"))
-}
-
 pub async fn feed_atom(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, AppError> {
     let response = render_cached(
         &state.page_cache,
@@ -163,8 +169,9 @@ pub async fn feed_atom(State(state): State<AppState>, headers: HeaderMap) -> Res
         "application/atom+xml; charset=utf-8",
         if_none_match(&headers),
         || async {
-            let posts = db::with_conn(&state.db, |conn| posts::list_published(conn, 20, 0)).await?;
-            Ok(feeds::atom_feed(&SiteView::from(&state.config.site), &posts))
+            let feed = state.config.feed_collections();
+            let posts = db::with_conn(&state.db, move |conn| posts::list_published_in(conn, &feed, FEED_LENGTH)).await?;
+            Ok(feeds::atom_feed(&SiteView::from(&*state.config), &posts))
         },
     )
     .await?;
@@ -179,8 +186,9 @@ pub async fn feed_rss(State(state): State<AppState>, headers: HeaderMap) -> Resu
         "application/rss+xml; charset=utf-8",
         if_none_match(&headers),
         || async {
-            let posts = db::with_conn(&state.db, |conn| posts::list_published(conn, 20, 0)).await?;
-            Ok(feeds::rss_feed(&SiteView::from(&state.config.site), &posts))
+            let feed = state.config.feed_collections();
+            let posts = db::with_conn(&state.db, move |conn| posts::list_published_in(conn, &feed, FEED_LENGTH)).await?;
+            Ok(feeds::rss_feed(&SiteView::from(&*state.config), &posts))
         },
     )
     .await?;
@@ -195,8 +203,8 @@ pub async fn sitemap(State(state): State<AppState>, headers: HeaderMap) -> Resul
         "application/xml; charset=utf-8",
         if_none_match(&headers),
         || async {
-            let posts = db::with_conn(&state.db, posts::list_all_published_any_kind).await?;
-            Ok(feeds::sitemap_xml(&SiteView::from(&state.config.site), &posts))
+            let posts = db::with_conn(&state.db, posts::list_all_published).await?;
+            Ok(feeds::sitemap_xml(&SiteView::from(&*state.config), &posts))
         },
     )
     .await
@@ -212,7 +220,7 @@ pub async fn healthz() -> StatusCode {
     StatusCode::OK
 }
 
-/// Pre-renders the index and the most recent published posts into the page
+/// Pre-renders the index and the most recent `in_feed` items into the page
 /// cache at startup, so the first real requests after a deploy are already
 /// warm instead of paying for the first render.
 pub async fn warm_cache(state: &AppState) {
@@ -221,11 +229,12 @@ pub async fn warm_cache(state: &AppState) {
         tracing::warn!(error = %e, "failed to warm index cache");
     }
 
-    let recent = db::with_conn(&state.db, |conn| posts::list_published(conn, 5, 0)).await;
+    let feed = state.config.feed_collections();
+    let recent = db::with_conn(&state.db, move |conn| posts::list_published_in(conn, &feed, 5)).await;
     match recent {
         Ok(recent) => {
             for post in recent {
-                if let Err(e) = show_post(State(state.clone()), Path(post.slug.clone()), empty_headers.clone()).await {
+                if let Err(e) = show_item(State(state.clone()), Path(post.slug.clone()), empty_headers.clone()).await {
                     tracing::warn!(error = %e, slug = %post.slug, "failed to warm post cache");
                 }
             }

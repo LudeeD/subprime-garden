@@ -22,28 +22,6 @@ impl PostStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub enum PostKind {
-    Post,
-    Page,
-}
-
-impl PostKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            PostKind::Post => "post",
-            PostKind::Page => "page",
-        }
-    }
-
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "page" => PostKind::Page,
-            _ => PostKind::Post,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct Post {
     pub id: i64,
@@ -53,7 +31,11 @@ pub struct Post {
     pub html: String,
     pub excerpt: String,
     pub status: PostStatus,
-    pub kind: PostKind,
+    /// Name of a `[[collections]]` entry in garden.toml.
+    pub collection: String,
+    /// The collection's typed fields, as validated by `content::fields`.
+    /// Fields an item leaves empty are absent, not null.
+    pub fields: serde_json::Map<String, serde_json::Value>,
     pub created_at: String,
     pub updated_at: String,
     pub published_at: Option<String>,
@@ -69,12 +51,19 @@ impl Post {
             html: row.get("html")?,
             excerpt: row.get("excerpt")?,
             status: PostStatus::from_str(&row.get::<_, String>("status")?),
-            kind: PostKind::from_str(&row.get::<_, String>("kind")?),
+            collection: row.get("collection")?,
+            fields: parse_fields(&row.get::<_, String>("fields")?)?,
             created_at: row.get("created_at")?,
             updated_at: row.get("updated_at")?,
             published_at: row.get("published_at")?,
         })
     }
+}
+
+fn parse_fields(json: &str) -> rusqlite::Result<serde_json::Map<String, serde_json::Value>> {
+    serde_json::from_str(json).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]

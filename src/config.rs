@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
@@ -18,14 +19,6 @@ pub struct SiteConfig {
     /// top-level `tags = [...]` (a shortcut for the "tags" taxonomy) or
     /// `[taxonomies]` with one key per name.
     pub taxonomies: Vec<String>,
-}
-
-impl SiteConfig {
-    /// True when `/<slug>` already belongs to a fixed route or a taxonomy
-    /// index, so a post with that slug would be unreachable.
-    pub fn is_reserved_path(&self, slug: &str) -> bool {
-        RESERVED_PATHS.contains(&slug) || self.taxonomies.iter().any(|t| t == slug)
-    }
 }
 
 impl Default for SiteConfig {
@@ -133,10 +126,57 @@ impl Default for MediaConfig {
     }
 }
 
+/// The type of one collection field. Simple types are written as a string
+/// (`author = "text"`), a choice as a table (`shelf = { choice = [...] }`) —
+/// serde's externally tagged enum format reads both.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FieldType {
+    Text,
+    Int,
+    Date,
+    Url,
+    /// A filename in the media store.
+    Media,
+    Choice(Vec<String>),
+}
+
+/// One kind of content (posts, pages, books, ...), declared as a
+/// `[[collections]]` entry. Its items live at `/<slug>`, its list page at
+/// `/<name>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectionConfig {
+    pub name: String,
+    /// Whether items show up on the home page and in the feeds.
+    #[serde(default)]
+    pub in_feed: bool,
+    /// `"<key> [asc|desc]"`, where key is `published_at`, `title`, or a
+    /// declared field. See `sort_key`.
+    #[serde(default = "default_sort")]
+    pub sort: String,
+    #[serde(default)]
+    pub fields: BTreeMap<String, FieldType>,
+}
+
+fn default_sort() -> String {
+    "published_at desc".into()
+}
+
+impl CollectionConfig {
+    /// Splits `sort` into its key and whether it sorts descending. Only
+    /// meaningful after `Config::validate` has accepted it.
+    pub fn sort_key(&self) -> (&str, bool) {
+        let mut parts = self.sort.split_whitespace();
+        let key = parts.next().unwrap_or("published_at");
+        (key, parts.next() == Some("desc"))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Config {
     pub site: SiteConfig,
+    pub collections: Vec<CollectionConfig>,
     pub server: ServerConfig,
     pub auth: AuthConfig,
     pub analytics: AnalyticsConfig,
@@ -174,6 +214,35 @@ pub enum ConfigError {
     ReservedTaxonomyName(String),
     #[error("site.taxonomies has {0:?} listed more than once")]
     DuplicateTaxonomyName(String),
+    #[error(
+        "no [[collections]] declared — run `subprime-garden init` to add the stock posts/pages \
+         collections to garden.toml"
+    )]
+    NoCollections,
+    #[error(
+        "collection name {0:?} is invalid — collection names must be lowercase ascii letters, \
+         digits, or hyphens"
+    )]
+    InvalidCollectionName(String),
+    #[error(
+        "collection name {0:?} collides with a reserved path, a template name, or a taxonomy — \
+         pick a different name"
+    )]
+    ReservedCollectionName(String),
+    #[error("collection {0:?} is declared more than once")]
+    DuplicateCollectionName(String),
+    #[error(
+        "collection {0:?} has an invalid field name {1:?} — field names must be lowercase ascii \
+         letters, digits, or underscores"
+    )]
+    InvalidFieldName(String, String),
+    #[error("collection {0:?} field {1:?} is a choice with no options")]
+    EmptyChoice(String, String),
+    #[error(
+        "collection {0:?} has sort {1:?} — expected `<key> [asc|desc]`, where key is \
+         published_at, title, or one of the collection's fields"
+    )]
+    InvalidSort(String, String),
     #[error("auth.password_hash is the default one, should be replaced first")]
     RejectDefaultPasswordHash,
     #[error("auth.session_secret is the default one, should be replaced first")]
@@ -185,11 +254,9 @@ pub enum ConfigError {
 pub const PLACEHOLDER_PASSWORD_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$REPLACE$ME";
 pub const PLACEHOLDER_SESSION_SECRET: &str = "replace-with-at-least-32-random-bytes";
 
-/// Top-level paths already claimed by other routes — a taxonomy name or post
-/// slug can't reuse one without being shadowed by it.
+/// Top-level paths already claimed by other routes — a taxonomy name,
+/// collection name or item slug can't reuse one without being shadowed by it.
 const RESERVED_PATHS: &[&str] = &[
-    "archive",
-    "tag",
     "feed.xml",
     "rss.xml",
     "sitemap.xml",
@@ -199,6 +266,24 @@ const RESERVED_PATHS: &[&str] = &[
     "static",
     "admin",
 ];
+
+/// Stock template names a collection's `<name>.html` would collide with.
+const TEMPLATE_STEMS: &[&str] = &[
+    "index",
+    "base",
+    "entry",
+    "card",
+    "collection",
+    "taxonomy_index",
+    "taxonomy_term",
+];
+
+fn is_slug_like(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
 
 impl Config {
     /// Load from an optional TOML file, then apply `SUBPRIME_*` env var overrides.
@@ -243,11 +328,7 @@ impl Config {
 
         let mut seen = std::collections::HashSet::new();
         for name in &self.site.taxonomies {
-            if name.is_empty()
-                || !name
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-            {
+            if !is_slug_like(name) {
                 return Err(ConfigError::InvalidTaxonomyName(name.clone()));
             }
             if RESERVED_PATHS.contains(&name.as_str()) {
@@ -257,7 +338,71 @@ impl Config {
                 return Err(ConfigError::DuplicateTaxonomyName(name.clone()));
             }
         }
+        self.validate_collections()
+    }
+
+    #[allow(clippy::result_large_err)]
+    fn validate_collections(&self) -> Result<(), ConfigError> {
+        if self.collections.is_empty() {
+            return Err(ConfigError::NoCollections);
+        }
+        let mut seen = std::collections::HashSet::new();
+        for c in &self.collections {
+            if !is_slug_like(&c.name) {
+                return Err(ConfigError::InvalidCollectionName(c.name.clone()));
+            }
+            if RESERVED_PATHS.contains(&c.name.as_str())
+                || TEMPLATE_STEMS.contains(&c.name.as_str())
+                || self.site.taxonomies.contains(&c.name)
+            {
+                return Err(ConfigError::ReservedCollectionName(c.name.clone()));
+            }
+            if !seen.insert(c.name.as_str()) {
+                return Err(ConfigError::DuplicateCollectionName(c.name.clone()));
+            }
+            for (field, ty) in &c.fields {
+                // Field names end up in `json_extract` paths and form input
+                // names, so keep them to characters that are safe in both.
+                let valid = !field.is_empty()
+                    && field
+                        .chars()
+                        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_');
+                if !valid {
+                    return Err(ConfigError::InvalidFieldName(c.name.clone(), field.clone()));
+                }
+                if matches!(ty, FieldType::Choice(options) if options.is_empty()) {
+                    return Err(ConfigError::EmptyChoice(c.name.clone(), field.clone()));
+                }
+            }
+            let parts: Vec<&str> = c.sort.split_whitespace().collect();
+            let key_ok = |key: &str| key == "published_at" || key == "title" || c.fields.contains_key(key);
+            let sort_ok = match parts.as_slice() {
+                [key] => key_ok(key),
+                [key, dir] => key_ok(key) && (*dir == "asc" || *dir == "desc"),
+                _ => false,
+            };
+            if !sort_ok {
+                return Err(ConfigError::InvalidSort(c.name.clone(), c.sort.clone()));
+            }
+        }
         Ok(())
+    }
+
+    /// True when `/<slug>` already belongs to a fixed route, a taxonomy index
+    /// or a collection list, so an item with that slug would be unreachable.
+    pub fn is_reserved_path(&self, slug: &str) -> bool {
+        RESERVED_PATHS.contains(&slug)
+            || self.site.taxonomies.iter().any(|t| t == slug)
+            || self.collections.iter().any(|c| c.name == slug)
+    }
+
+    pub fn collection(&self, name: &str) -> Option<&CollectionConfig> {
+        self.collections.iter().find(|c| c.name == name)
+    }
+
+    /// Names of the collections whose items go on the home page and feeds.
+    pub fn feed_collections(&self) -> Vec<String> {
+        self.collections.iter().filter(|c| c.in_feed).map(|c| c.name.clone()).collect()
     }
 
     pub fn bind_addr(&self) -> Result<SocketAddr, std::net::AddrParseError> {
@@ -283,6 +428,29 @@ impl Config {
     }
 }
 
+/// posts + pages (the stock pair) and a books collection with one field of
+/// every type, for tests.
+#[cfg(test)]
+pub fn test_collections() -> Vec<CollectionConfig> {
+    let collection = |name: &str, in_feed: bool| CollectionConfig {
+        name: name.into(),
+        in_feed,
+        sort: default_sort(),
+        fields: BTreeMap::new(),
+    };
+    let mut books = collection("books", false);
+    books.sort = "finished desc".into();
+    books.fields = BTreeMap::from([
+        ("author".into(), FieldType::Text),
+        ("rating".into(), FieldType::Int),
+        ("finished".into(), FieldType::Date),
+        ("link".into(), FieldType::Url),
+        ("cover".into(), FieldType::Media),
+        ("shelf".into(), FieldType::Choice(vec!["read".into(), "reading".into()])),
+    ]);
+    vec![collection("posts", true), collection("pages", false), books]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,7 +460,63 @@ mod tests {
         config.auth.username = "owner".into();
         config.auth.password_hash = "$argon2id$not-the-placeholder".into();
         config.auth.session_secret = "x".repeat(32);
+        config.collections = test_collections();
         config
+    }
+
+    #[test]
+    fn collections_parse_from_toml() {
+        let config: Config = Figment::from(Serialized::defaults(Config::default()))
+            .merge(Toml::string(
+                r#"
+                [[collections]]
+                name = "books"
+                sort = "finished desc"
+                fields.rating = "int"
+                fields.finished = "date"
+                fields.shelf = { choice = ["read", "reading"] }
+                "#,
+            ))
+            .extract()
+            .unwrap();
+        let books = config.collection("books").unwrap();
+        assert!(!books.in_feed);
+        assert_eq!(books.sort_key(), ("finished", true));
+        assert_eq!(books.fields["rating"], FieldType::Int);
+        assert_eq!(books.fields["shelf"], FieldType::Choice(vec!["read".into(), "reading".into()]));
+    }
+
+    #[test]
+    #[allow(clippy::result_large_err)]
+    fn bad_collections_are_rejected() {
+        let with = |edit: &dyn Fn(&mut Config)| {
+            let mut config = valid();
+            edit(&mut config);
+            config.validate()
+        };
+        assert!(matches!(with(&|c| c.collections.clear()), Err(ConfigError::NoCollections)));
+        assert!(matches!(
+            with(&|c| c.collections[0].name = "tags".into()),
+            Err(ConfigError::ReservedCollectionName(_))
+        ));
+        assert!(matches!(
+            with(&|c| c.collections[0].name = "entry".into()),
+            Err(ConfigError::ReservedCollectionName(_))
+        ));
+        assert!(matches!(
+            with(&|c| c.collections[1].name = "posts".into()),
+            Err(ConfigError::DuplicateCollectionName(_))
+        ));
+        assert!(matches!(
+            with(&|c| c.collections[2].sort = "pages desc".into()),
+            Err(ConfigError::InvalidSort(..))
+        ));
+        assert!(matches!(
+            with(&|c| {
+                c.collections[2].fields.insert("Bad-Name".into(), FieldType::Text);
+            }),
+            Err(ConfigError::InvalidFieldName(..))
+        ));
     }
 
     #[test]

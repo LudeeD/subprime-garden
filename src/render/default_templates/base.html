@@ -16,7 +16,7 @@
     {% if site.description %}<p class="site-description">{{ site.description }}</p>{% endif %}
   </div>
   <nav>
-    <a href="/archive">archive</a>
+    {% for collection in site.collections %}<a href="/{{ collection }}">{{ collection }}</a>{% endfor %}
     {% for taxonomy in site.taxonomies %}<a href="/{{ taxonomy }}">{{ taxonomy }}</a>{% endfor %}
     <a href="/feed.xml">feed</a>
   </nav>

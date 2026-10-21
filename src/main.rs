@@ -57,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
             let mut conn = pool.get()?;
             db::run_migrations(&mut conn)?;
             let opts = cli::import::ImportOptions { published, force, dry_run };
-            cli::import::run(&mut conn, &dir, &opts, &config.markdown, &config.site)?;
+            cli::import::run(&mut conn, &dir, &opts, &config)?;
         }
         Command::Export { dir } => {
             let config = Config::load(config_path.as_ref())?;
@@ -83,6 +83,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     {
         let mut conn = pool.get()?;
         db::run_migrations(&mut conn)?;
+        content::check::check_stored(&conn, &config)?;
     }
 
     let bind_addr = config.bind_addr()?;
@@ -98,7 +99,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         analytics: std::sync::Arc::new(analytics_handle),
         page_cache: std::sync::Arc::new(render::cache::PageCache::new()),
         templates,
-        pages: Default::default(),
+        content: Default::default(),
     };
     state.content_changed().await?;
     web::public::warm_cache(&state).await;

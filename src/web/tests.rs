@@ -16,7 +16,7 @@ use tower::ServiceExt;
 
 use crate::auth::{self, SessionData};
 use crate::config::Config;
-use crate::db::models::{PostKind, PostStatus};
+use crate::db::models::PostStatus;
 use crate::db::{self, media, posts, taxonomy};
 
 use super::AppState;
@@ -38,10 +38,21 @@ impl Drop for TestApp {
 
 impl TestApp {
     async fn new() -> Self {
+        Self::with_templates(&[]).await
+    }
+
+    /// The stock theme plus `extra` (name, source) templates, as a theme
+    /// would add on disk.
+    async fn with_templates(extra: &[(&str, &str)]) -> Self {
         let dir = std::env::temp_dir().join(format!("subprime-garden-test-{}", auth::random_token()));
         let mut config = Config::default();
+        config.collections = crate::config::test_collections();
         config.server.database = dir.join("garden.db");
         config.server.media_dir = dir.join("media");
+        let mut templates = crate::cli::init::stock_env();
+        for (name, source) in extra {
+            templates.add_template_owned(name.to_string(), source.to_string()).unwrap();
+        }
 
         let pool = db::open_pool(&config.server.database).unwrap();
         db::run_migrations(&mut pool.get().unwrap()).unwrap();
@@ -54,8 +65,8 @@ impl TestApp {
             login_ratelimit: Arc::new(auth::ratelimit::RateLimiter::new()),
             analytics: Arc::new(analytics),
             page_cache: Arc::new(crate::render::cache::PageCache::new()),
-            templates: Arc::new(crate::cli::init::stock_env()),
-            pages: Default::default(),
+            templates: Arc::new(templates),
+            content: Default::default(),
         };
         state.content_changed().await.unwrap();
 
@@ -82,6 +93,12 @@ impl TestApp {
 
     async fn get(&self, path: &str) -> (StatusCode, String) {
         self.send(Request::get(path).body(Body::empty()).unwrap()).await
+    }
+
+    /// GET as the logged-in admin.
+    async fn get_admin(&self, path: &str) -> (StatusCode, String) {
+        let request = Request::get(path).header(header::COOKIE, &self.cookie).body(Body::empty()).unwrap();
+        self.send(request).await
     }
 
     /// Fetches `path`, then again with the `ETag` it came back with, the way
@@ -151,25 +168,46 @@ impl TestApp {
     }
 
     async fn publish_posts(&self, count: usize) {
+        for i in 0..count {
+            self.publish(&format!("post-{i}"), "posts", serde_json::json!({})).await;
+        }
+    }
+
+    /// Inserts a published item straight into the database, as if saved and
+    /// published through the admin.
+    async fn publish(&self, slug: &str, collection: &str, fields: serde_json::Value) -> i64 {
+        let new = posts::NewPost {
+            slug: slug.into(),
+            title: format!("Title of {slug}"),
+            markdown: String::new(),
+            html: String::new(),
+            excerpt: String::new(),
+            status: PostStatus::Published,
+            collection: collection.into(),
+            fields: fields.as_object().unwrap().clone(),
+        };
+        let id = db::with_conn(&self.state.db, move |conn| posts::insert(conn, &new)).await.unwrap();
+        self.state.content_changed().await.unwrap();
+        id
+    }
+
+    async fn tag(&self, id: i64, term: &str) {
+        let term = term.to_string();
         db::with_conn(&self.state.db, move |conn| {
-            for i in 0..count {
-                posts::insert(
-                    conn,
-                    &posts::NewPost {
-                        slug: format!("post-{i}"),
-                        title: format!("Post {i}"),
-                        markdown: String::new(),
-                        html: String::new(),
-                        excerpt: String::new(),
-                        status: PostStatus::Published,
-                        kind: PostKind::Post,
-                    },
-                )?;
-            }
-            Ok(())
+            let terms = taxonomy::find_or_create(conn, "tags", &[term])?;
+            taxonomy::set_post_terms(conn, "tags", id, &terms)
         })
         .await
         .unwrap();
+        self.state.content_changed().await.unwrap();
+    }
+
+    async fn item(&self, slug: &str) -> crate::db::models::Post {
+        let slug = slug.to_string();
+        db::with_conn(&self.state.db, move |conn| posts::get_by_slug(conn, &slug, true))
+            .await
+            .unwrap()
+            .unwrap()
     }
 }
 
@@ -185,7 +223,7 @@ fn listed_posts(html: &str) -> usize {
 }
 
 #[tokio::test]
-async fn home_lists_ten_posts_and_archive_lists_all() {
+async fn home_lists_ten_posts_and_the_posts_page_lists_all() {
     let app = TestApp::new().await;
     app.publish_posts(12).await;
 
@@ -193,9 +231,16 @@ async fn home_lists_ten_posts_and_archive_lists_all() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(listed_posts(&home), 10);
 
-    let (status, archive) = app.get("/archive").await;
+    let (status, all) = app.get("/posts").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(listed_posts(&archive), 12);
+    assert_eq!(listed_posts(&all), 12);
+}
+
+#[tokio::test]
+async fn removed_routes_are_gone() {
+    let app = TestApp::new().await;
+    assert_eq!(app.get("/archive").await.0, StatusCode::NOT_FOUND);
+    assert_eq!(app.get("/tag/rust").await.0, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -230,9 +275,22 @@ async fn upload_limit_follows_max_upload_bytes() {
 async fn user_mistakes_are_400s_not_500s() {
     let app = TestApp::new().await;
 
-    let untitled = [("title", ""), ("slug", ""), ("markdown", "hi"), ("kind", "post")];
+    let untitled = [("title", ""), ("slug", ""), ("markdown", "hi"), ("collection", "posts")];
     assert_eq!(app.post_form("/admin/posts", &untitled).await, StatusCode::BAD_REQUEST);
     assert_eq!(app.upload(b"not an image").await, StatusCode::BAD_REQUEST);
+
+    for (collection, field, value) in [
+        ("recipes", "field_author", "x"),
+        ("books", "field_rating", "five"),
+        ("books", "field_shelf", "lost"),
+        ("books", "field_cover", "missing.png"),
+        ("books", "field_isbn", "123"),
+        ("posts", "field_author", "x"),
+    ] {
+        let form = [("title", "Book"), ("slug", ""), ("markdown", "hi"), ("collection", collection), (field, value)];
+        assert_eq!(app.post_form("/admin/posts", &form).await, StatusCode::BAD_REQUEST, "{collection} {field}");
+    }
+    assert!(db::with_conn(&app.state.db, |conn| posts::list_all(conn, None)).await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -242,18 +300,18 @@ async fn return_visits_count_as_pageviews_but_feed_revalidations_do_not() {
     // Feed first: events are written in order, so if these were tracked they
     // would show up ahead of the page's.
     assert_eq!(app.revisit("/feed.xml").await, StatusCode::NOT_MODIFIED);
-    assert_eq!(app.revisit("/archive").await, StatusCode::NOT_MODIFIED);
+    assert_eq!(app.revisit("/posts").await, StatusCode::NOT_MODIFIED);
 
-    assert_eq!(app.pageview_paths(2).await, ["/archive", "/archive"]);
+    assert_eq!(app.pageview_paths(2).await, ["/posts", "/posts"]);
 }
 
 #[tokio::test]
 async fn posts_cannot_take_a_reserved_slug() {
     let app = TestApp::new().await;
 
-    // `/archive` is a fixed route, `/tags` the default taxonomy's index.
-    for title in ["Archive", "Tags"] {
-        let form = [("title", title), ("slug", ""), ("markdown", "hi"), ("kind", "post")];
+    // `/posts` is a collection's list page, `/tags` the default taxonomy's index.
+    for title in ["Posts", "Tags"] {
+        let form = [("title", title), ("slug", ""), ("markdown", "hi"), ("collection", "posts")];
         assert_eq!(app.post_form("/admin/posts", &form).await, StatusCode::SEE_OTHER);
     }
 
@@ -265,20 +323,20 @@ async fn posts_cannot_take_a_reserved_slug() {
     })
     .await
     .unwrap();
-    assert!(slugs.contains(&"archive-2".to_string()) && slugs.contains(&"tags-2".to_string()), "{slugs:?}");
+    assert!(slugs.contains(&"posts-2".to_string()) && slugs.contains(&"tags-2".to_string()), "{slugs:?}");
 
-    let (status, body) = app.get("/archive-2").await;
+    let (status, body) = app.get("/posts-2").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body.contains("<h1>Archive</h1>"));
+    assert!(body.contains("<h1>Posts</h1>"));
 }
 
 #[tokio::test]
-async fn published_page_shows_up_in_the_pages_global() {
+async fn get_item_finds_a_published_item_by_slug() {
     let app = TestApp::new().await;
     assert!(!app.get("/").await.1.contains("featured-page"));
 
-    // The stock index embeds `pages.about` when a page with that slug exists.
-    let form = [("title", "About"), ("slug", ""), ("markdown", "hello"), ("kind", "page")];
+    // The stock index embeds `get_item("about")` when an item with that slug exists.
+    let form = [("title", "About"), ("slug", ""), ("markdown", "hello"), ("collection", "pages")];
     assert_eq!(app.post_form("/admin/posts", &form).await, StatusCode::SEE_OTHER);
     let id = db::with_conn(&app.state.db, |conn| Ok(posts::list_all(conn, None)?[0].id)).await.unwrap();
     assert_eq!(app.post_form(&format!("/admin/posts/{id}/publish"), &[]).await, StatusCode::SEE_OTHER);
@@ -298,14 +356,14 @@ async fn terms_ignore_case_and_disappear_with_their_last_post() {
     };
 
     for (title, tags) in [("One", "Rust"), ("Two", "rust")] {
-        let form = [("title", title), ("slug", ""), ("markdown", "hi"), ("kind", "post"), ("tax_tags", tags)];
+        let form = [("title", title), ("slug", ""), ("markdown", "hi"), ("collection", "posts"), ("tax_tags", tags)];
         assert_eq!(app.post_form("/admin/posts", &form).await, StatusCode::SEE_OTHER);
     }
     assert_eq!(term_count().await, 1);
 
     for post in db::with_conn(&app.state.db, |conn| posts::list_all(conn, None)).await.unwrap() {
         let path = format!("/admin/posts/{}", post.id);
-        let form = [("title", post.title.as_str()), ("slug", post.slug.as_str()), ("markdown", "hi"), ("kind", "post"), ("tax_tags", "")];
+        let form = [("title", post.title.as_str()), ("slug", post.slug.as_str()), ("markdown", "hi"), ("collection", "posts"), ("tax_tags", "")];
         assert_eq!(app.post_form(&path, &form).await, StatusCode::SEE_OTHER);
     }
     assert_eq!(term_count().await, 0);
@@ -327,4 +385,155 @@ async fn terms_of_an_unconfigured_taxonomy_are_not_linked() {
     let (status, body) = app.get("/post-0").await;
     assert_eq!(status, StatusCode::OK);
     assert!(!body.contains("/series/"));
+}
+
+#[tokio::test]
+async fn a_book_is_created_with_typed_fields_and_rendered_with_them() {
+    let app = TestApp::new().await;
+    let form = [
+        ("title", "The Dispossessed"),
+        ("slug", ""),
+        ("markdown", "hi"),
+        ("collection", "books"),
+        ("field_author", "Le Guin"),
+        ("field_rating", "5"),
+        ("field_finished", "2026-09-14"),
+        ("field_shelf", "read"),
+        ("field_link", ""),
+        ("field_cover", ""),
+    ];
+    assert_eq!(app.post_form("/admin/posts", &form).await, StatusCode::SEE_OTHER);
+
+    let book = app.item("the-dispossessed").await;
+    assert_eq!(book.collection, "books");
+    assert_eq!(
+        serde_json::Value::Object(book.fields.clone()),
+        serde_json::json!({"author": "Le Guin", "rating": 5, "finished": "2026-09-14", "shelf": "read"})
+    );
+
+    let (status, edit) = app.get_admin(&format!("/admin/posts/{}/edit", book.id)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(edit.contains(r#"name="field_rating" value="5""#), "{edit}");
+
+    assert_eq!(app.post_form(&format!("/admin/posts/{}/publish", book.id), &[]).await, StatusCode::SEE_OTHER);
+    let (status, page) = app.get("/the-dispossessed").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("<dd>Le Guin</dd>") && !page.contains("<dt>link</dt>"), "{page}");
+}
+
+#[tokio::test]
+async fn collection_templates_win_over_the_stock_fallbacks() {
+    let app = TestApp::with_templates(&[
+        ("books_entry.html", "book {{ item.title }} by {{ item.fields.author }}{% if item.fields.cover is none %}, no cover{% endif %}"),
+        ("books.html", "{% for item in items %}{{ item.slug }};{% endfor %}"),
+        ("books_card.html", "<li class=\"post-item\">book card {{ item.slug }}</li>"),
+    ])
+    .await;
+    app.publish("dune", "books", serde_json::json!({"author": "Herbert"})).await;
+    app.publish("hello", "posts", serde_json::json!({})).await;
+
+    // Unset fields are present as none, so strict templates can use them.
+    assert_eq!(app.get("/dune").await.1, "book Title of dune by Herbert, no cover");
+    assert!(app.get("/hello").await.1.contains("<h1>Title of hello</h1>"));
+    assert_eq!(app.get("/books").await.1, "dune;");
+    assert!(app.get("/posts").await.1.contains("<h1>Posts</h1>"));
+
+    // Cards follow the item's collection on cross-collection lists.
+    let dune = app.item("dune").await;
+    app.tag(dune.id, "classics").await;
+    assert!(app.get("/tags/classics").await.1.contains("book card dune"));
+}
+
+#[tokio::test]
+async fn a_collection_lists_in_its_sort_order_with_unset_last() {
+    let app = TestApp::with_templates(&[("books.html", "{% for item in items %}{{ item.slug }};{% endfor %}")]).await;
+    app.publish("unfinished", "books", serde_json::json!({})).await;
+    app.publish("older", "books", serde_json::json!({"finished": "2025-01-01"})).await;
+    app.publish("newer", "books", serde_json::json!({"finished": "2026-01-01"})).await;
+    app.publish("a-post", "posts", serde_json::json!({})).await;
+
+    assert_eq!(app.get("/books").await.1, "newer;older;unfinished;");
+}
+
+#[tokio::test]
+async fn taxonomies_span_collections_but_feeds_only_carry_in_feed_ones() {
+    let app = TestApp::new().await;
+    let post = app.publish("a-post", "posts", serde_json::json!({})).await;
+    let book = app.publish("a-book", "books", serde_json::json!({})).await;
+    app.tag(post, "anarchism").await;
+    app.tag(book, "anarchism").await;
+
+    let (_, term) = app.get("/tags/anarchism").await;
+    assert_eq!(listed_posts(&term), 2);
+    assert!(app.get("/tags").await.1.contains(r#"<span class="tag-count">2</span>"#));
+
+    let (_, home) = app.get("/").await;
+    assert!(home.contains("/a-post") && !home.contains("/a-book"));
+    let (_, feed) = app.get("/feed.xml").await;
+    assert!(feed.contains("/a-post") && !feed.contains("/a-book"));
+
+    let (_, sitemap) = app.get("/sitemap.xml").await;
+    for path in ["/a-post<", "/a-book<", "/books<", "/pages<"] {
+        assert!(sitemap.contains(path), "{path} missing from {sitemap}");
+    }
+}
+
+#[tokio::test]
+async fn moving_an_item_keeps_its_fields_or_fails() {
+    let app = TestApp::new().await;
+    let id = app.publish("dune", "books", serde_json::json!({"author": "Herbert"})).await;
+    let path = format!("/admin/posts/{id}");
+
+    // posts has no `author` field, so the move would drop it.
+    let to_posts = [("title", "Dune"), ("slug", "dune"), ("markdown", "hi"), ("collection", "posts"), ("field_author", "Herbert")];
+    assert_eq!(app.post_form(&path, &to_posts).await, StatusCode::BAD_REQUEST);
+    assert_eq!(app.item("dune").await.collection, "books");
+
+    let cleared = [("title", "Dune"), ("slug", "dune"), ("markdown", "hi"), ("collection", "posts"), ("field_author", "")];
+    assert_eq!(app.post_form(&path, &cleared).await, StatusCode::SEE_OTHER);
+    let moved = app.item("dune").await;
+    assert_eq!((moved.collection.as_str(), moved.fields.len()), ("posts", 0));
+}
+
+#[tokio::test]
+async fn media_used_by_a_field_cannot_be_deleted() {
+    let app = TestApp::new().await;
+    assert_eq!(app.upload(&fake_png(1024)).await, StatusCode::SEE_OTHER);
+    let media = db::with_conn(&app.state.db, media::list_all).await.unwrap().remove(0);
+    app.publish("dune", "books", serde_json::json!({"cover": media.filename})).await;
+
+    let (_, page) = app.get("/dune").await;
+    // Auto-escaping writes the url's slashes as `&#x2f;`.
+    assert!(page.contains(&format!("media&#x2f;{}\" alt=\"cover\"", media.filename)), "{page}");
+
+    let delete = format!("/admin/media/{}/delete", media.id);
+    assert_eq!(app.post_form(&delete, &[]).await, StatusCode::BAD_REQUEST);
+    assert_eq!(db::with_conn(&app.state.db, media::list_all).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn every_admin_page_renders() {
+    let app = TestApp::new().await;
+    let id = app.publish("dune", "books", serde_json::json!({"rating": 4})).await;
+    for path in [
+        "/admin".to_string(),
+        "/admin/posts".to_string(),
+        "/admin/posts/new".to_string(),
+        "/admin/posts/new?collection=books".to_string(),
+        format!("/admin/posts/{id}/edit"),
+        format!("/admin/preview/{id}"),
+        "/admin/media".to_string(),
+        "/admin/analytics".to_string(),
+    ] {
+        let (status, body) = app.get_admin(&path).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {body}");
+    }
+    assert_eq!(app.get_admin("/admin/posts/new?collection=recipes").await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn an_undefined_template_variable_is_an_error() {
+    let app = TestApp::with_templates(&[("pages_entry.html", "{{ item.subtitle }}")]).await;
+    app.publish("about", "pages", serde_json::json!({})).await;
+    assert_eq!(app.get("/about").await.0, StatusCode::INTERNAL_SERVER_ERROR);
 }

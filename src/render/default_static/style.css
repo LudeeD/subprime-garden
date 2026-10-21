@@ -150,7 +150,7 @@ time {
   font-size: 2.1rem;
 }
 
-/* --- listings (index / archive / tag) --- */
+/* --- listings (index / collection / tag) --- */
 
 .post-list {
   list-style: none;
@@ -212,6 +212,23 @@ time {
 
 .post-body {
   margin-top: 1.5rem;
+}
+
+.item-fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  margin: 1.5rem 0 0;
+  color: var(--muted);
+}
+
+.item-fields dd {
+  margin: 0;
+}
+
+.item-fields img {
+  max-width: 12rem;
+  height: auto;
 }
 
 .post-body img {

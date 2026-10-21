@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::net::SocketAddr;
 
 use axum::extract::{ConnectInfo, DefaultBodyLimit, Multipart, Path, Query, State};
@@ -10,14 +11,16 @@ use serde::Deserialize;
 
 use crate::auth::cookie::AdminSession;
 use crate::auth::{self, SessionData};
-use crate::content::markdown;
-use crate::db::models::{Post, PostKind, PostStatus};
+use crate::config::CollectionConfig;
+use crate::content::{fields, markdown};
+use crate::db::models::{Post, PostStatus};
+use crate::db::posts::Fields;
 use crate::db::{self, media, posts};
 use crate::error::AppError;
 use crate::media_store;
 use crate::render::{
-    self, AdminMediaRow, AdminPostRow, AnalyticsTemplate, DashboardTemplate, LoginTemplate,
-    MediaGridTemplate, PostEditTemplate, PostTemplate, PostsListTemplate, SiteView,
+    self, AdminMediaRow, AdminPostRow, AnalyticsTemplate, DashboardTemplate, FieldInputView,
+    LoginTemplate, MediaGridTemplate, PostEditTemplate, PostsListTemplate, SiteView,
     TaxonomyFieldView,
 };
 
@@ -64,7 +67,7 @@ struct PostForm {
     title: String,
     slug: String,
     markdown: String,
-    kind: String,
+    collection: String,
     /// Only present on the edit form — absent (not just empty) on new-post
     /// submissions, which don't render these inputs at all.
     #[serde(default)]
@@ -73,10 +76,51 @@ struct PostForm {
     published_at: Option<String>,
     csrf_token: String,
     /// Per-taxonomy comma-separated term lists, one input per taxonomy
-    /// configured in `site.taxonomies`, named `tax_<taxonomy>` in the form
-    /// (see admin/post_edit.html) and caught here by `#[serde(flatten)]`.
+    /// configured in `site.taxonomies`, named `tax_<taxonomy>`, and one input
+    /// per collection field, named `field_<name>` (see admin/post_edit.html),
+    /// caught here by `#[serde(flatten)]`.
     #[serde(flatten)]
     rest: std::collections::HashMap<String, String>,
+}
+
+/// The submitted collection and its `field_<name>` inputs, checked against
+/// the collection's schema. When an edit moves an item to another
+/// collection, the inputs are the old collection's, so a filled-in field the
+/// new one doesn't declare fails here rather than being dropped.
+async fn collection_fields(state: &AppState, form: &PostForm) -> Result<(String, Fields), AppError> {
+    let collection = state
+        .config
+        .collection(&form.collection)
+        .ok_or_else(|| AppError::BadRequest(format!("unknown collection {:?}", form.collection)))?;
+    let media = media_filenames(state).await?;
+    let media: HashSet<&str> = media.iter().map(String::as_str).collect();
+    let inputs = form
+        .rest
+        .iter()
+        .filter_map(|(k, v)| k.strip_prefix("field_").map(|name| (name, v.as_str())));
+    let fields = fields::from_form(&collection.fields, inputs, &|f| media.contains(f))
+        .map_err(AppError::BadRequest)?;
+    Ok((collection.name.clone(), fields))
+}
+
+async fn media_filenames(state: &AppState) -> Result<Vec<String>, AppError> {
+    let items = db::with_conn(&state.db, media::list_all).await?;
+    Ok(items.into_iter().map(|m| m.filename).collect())
+}
+
+/// One edit-form input per field `collection` declares, pre-filled from
+/// `values`.
+async fn field_inputs(
+    state: &AppState,
+    collection: &CollectionConfig,
+    values: &Fields,
+) -> Result<Vec<FieldInputView>, AppError> {
+    let media = media_filenames(state).await?;
+    Ok(collection
+        .fields
+        .iter()
+        .map(|(name, ty)| FieldInputView::new(name, ty, values.get(name), &media))
+        .collect())
 }
 
 /// Pulls the `tax_<taxonomy>` inputs back out of a submitted `PostForm`,
@@ -115,6 +159,11 @@ struct SavedQuery {
 }
 
 #[derive(Deserialize)]
+struct NewQuery {
+    collection: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct StatusQuery {
     status: Option<String>,
 }
@@ -136,7 +185,7 @@ async fn login_form(
     let token = auth::random_token();
     let jar = jar.add(auth::cookie::login_csrf_cookie(&token));
     let page = LoginTemplate {
-        site: SiteView::from(&state.config.site),
+        site: SiteView::from(&*state.config),
         csrf_token: token,
         error: None,
     };
@@ -165,7 +214,7 @@ async fn login_submit(
         let token = auth::random_token();
         let jar = jar.add(auth::cookie::login_csrf_cookie(&token));
         let page = LoginTemplate {
-            site: SiteView::from(&state.config.site),
+            site: SiteView::from(&*state.config),
             csrf_token: token,
             error: Some("Invalid username or password.".to_string()),
         };
@@ -207,7 +256,7 @@ async fn dashboard(
     .await?;
 
     let ctx = DashboardTemplate {
-        site: SiteView::from(&state.config.site),
+        site: SiteView::from(&*state.config),
         csrf_token: session.csrf,
         recent_posts: recent.iter().map(AdminPostRow::from).collect(),
         published_count,
@@ -239,7 +288,7 @@ async fn admin_analytics(
     let views_series = |s: &[crate::db::analytics::DayStat]| s.iter().map(|d| d.views).collect::<Vec<_>>();
 
     let ctx = AnalyticsTemplate {
-        site: SiteView::from(&state.config.site),
+        site: SiteView::from(&*state.config),
         csrf_token: session.csrf,
         total_views,
         views_7d: sum_views(&series7),
@@ -274,26 +323,35 @@ async fn posts_list(
     let posts = db::with_conn(&state.db, move |conn| posts::list_all(conn, status_filter)).await?;
 
     let ctx = PostsListTemplate {
-        site: SiteView::from(&state.config.site),
+        site: SiteView::from(&*state.config),
         csrf_token: session.csrf,
         posts: posts.iter().map(AdminPostRow::from).collect(),
     };
     Ok(Html(state.render(&ctx)?))
 }
 
+/// `?collection=books` picks what the new item will be; it defaults to the
+/// first declared collection.
 async fn post_new_form(
     session: AdminSession,
     State(state): State<AppState>,
+    Query(q): Query<NewQuery>,
 ) -> Result<Html<String>, AppError> {
+    let collection = match &q.collection {
+        Some(name) => state.config.collection(name).ok_or(AppError::NotFound)?,
+        None => &state.config.collections[0],
+    };
     let ctx = PostEditTemplate {
-        site: SiteView::from(&state.config.site),
+        site: SiteView::from(&*state.config),
         csrf_token: session.csrf,
         is_new: true,
         id: 0,
         slug: String::new(),
         title: String::new(),
         markdown: String::new(),
-        kind: "post".to_string(),
+        collection: collection.name.clone(),
+        collections: state.config.collections.iter().map(|c| c.name.clone()).collect(),
+        fields: field_inputs(&state, collection, &Fields::new()).await?,
         status: "draft".to_string(),
         saved: false,
         taxonomies: state
@@ -328,16 +386,23 @@ async fn post_edit_form(
     })
     .await?;
     let post = post.ok_or(AppError::NotFound)?;
+    let collection = state
+        .config
+        .collection(&post.collection)
+        .ok_or_else(|| anyhow::anyhow!("collection {:?} is not declared", post.collection))?;
+    let fields = field_inputs(&state, collection, &post.fields).await?;
 
     let ctx = PostEditTemplate {
-        site: SiteView::from(&state.config.site),
+        site: SiteView::from(&*state.config),
         csrf_token: session.csrf,
         is_new: false,
         id: post.id,
         slug: post.slug,
         title: post.title,
         markdown: post.markdown,
-        kind: post.kind.as_str().to_string(),
+        collection: post.collection,
+        collections: state.config.collections.iter().map(|c| c.name.clone()).collect(),
+        fields,
         status: post.status.as_str().to_string(),
         saved: q.saved.unwrap_or(false),
         taxonomies: taxonomy_values
@@ -361,7 +426,7 @@ async fn post_create(
     if title.is_empty() {
         return Err(AppError::BadRequest("title is required".into()));
     }
-    let kind = PostKind::from_str(&form.kind);
+    let (collection, fields) = collection_fields(&state, &form).await?;
     let taxonomy_terms = taxonomy_terms_from_form(&form, &state.config.site.taxonomies);
     let markdown_cfg = state.config.markdown.clone();
     let markdown_src = form.markdown;
@@ -376,7 +441,7 @@ async fn post_create(
         } else {
             requested_slug.as_str()
         };
-        let post_slug = posts::unique_slug(conn, &config.site, slug_source, None)?;
+        let post_slug = posts::unique_slug(conn, &config, slug_source, None)?;
         let rendered = markdown::render(&markdown_src, &markdown_cfg, &|filename| {
             media::variant_lookup(conn, filename)
         });
@@ -387,7 +452,8 @@ async fn post_create(
             html: rendered.html,
             excerpt: rendered.excerpt,
             status: PostStatus::Draft,
-            kind,
+            collection,
+            fields,
         };
         let id = posts::insert(conn, &new)?;
         for (name, names) in &taxonomy_terms {
@@ -415,6 +481,7 @@ async fn post_update(
     if title.is_empty() {
         return Err(AppError::BadRequest("title is required".into()));
     }
+    let (collection, fields) = collection_fields(&state, &form).await?;
     let taxonomy_terms = taxonomy_terms_from_form(&form, &state.config.site.taxonomies);
     let markdown_cfg = state.config.markdown.clone();
     let markdown_src = form.markdown;
@@ -433,7 +500,7 @@ async fn post_update(
         } else {
             requested_slug.as_str()
         };
-        let post_slug = posts::unique_slug(conn, &config.site, slug_source, Some(id))?;
+        let post_slug = posts::unique_slug(conn, &config, slug_source, Some(id))?;
         let rendered = markdown::render(&markdown_src, &markdown_cfg, &|filename| {
             media::variant_lookup(conn, filename)
         });
@@ -451,6 +518,8 @@ async fn post_update(
             markdown: markdown_src,
             html: rendered.html,
             excerpt: rendered.excerpt,
+            collection,
+            fields,
             created_at,
             published_at,
         };
@@ -523,22 +592,10 @@ async fn post_preview(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Html<String>, AppError> {
-    let (post, post_terms) = db::with_conn(&state.db, move |conn| {
-        let post = posts::get_by_id(conn, id)?;
-        let terms = match &post {
-            Some(_) => crate::db::taxonomy::all_for_post(conn, id)?,
-            None => Vec::new(),
-        };
-        Ok((post, terms))
-    })
-    .await?;
-    let post = post.ok_or(AppError::NotFound)?;
-
-    let ctx = PostTemplate {
-        site: SiteView::from(&state.config.site),
-        post: crate::render::PostView::with_taxonomies(&post, &post_terms, &state.config.site.taxonomies),
-    };
-    Ok(Html(state.render(&ctx)?))
+    let post = db::with_conn(&state.db, move |conn| posts::get_by_id(conn, id))
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(Html(state.render_entry(&post)?))
 }
 
 async fn media_grid(
@@ -547,7 +604,7 @@ async fn media_grid(
 ) -> Result<Html<String>, AppError> {
     let items = db::with_conn(&state.db, media::list_all).await?;
     let ctx = MediaGridTemplate {
-        site: SiteView::from(&state.config.site),
+        site: SiteView::from(&*state.config),
         csrf_token: session.csrf,
         items: items.iter().map(AdminMediaRow::from).collect(),
     };
@@ -624,6 +681,7 @@ async fn media_upload(
         )
     })
     .await?;
+    state.content_changed().await?;
 
     Ok(Redirect::to("/admin/media"))
 }
@@ -640,10 +698,35 @@ async fn media_delete(
     let item = db::with_conn(&state.db, move |conn| media::get_by_id(conn, id))
         .await?
         .ok_or(AppError::NotFound)?;
+
+    // A media field pointing at a deleted file would fail the startup check.
+    let all = db::with_conn(&state.db, |conn| posts::list_all(conn, None)).await?;
+    let users: Vec<&str> = all
+        .iter()
+        .filter(|post| uses_media(state.config.collection(&post.collection), post, &item.filename))
+        .map(|post| post.slug.as_str())
+        .collect();
+    if !users.is_empty() {
+        return Err(AppError::BadRequest(format!(
+            "{} is used by a media field of: {}",
+            item.filename,
+            users.join(", ")
+        )));
+    }
+
     media_store::delete_files(&media_dir, &item);
     db::with_conn(&state.db, move |conn| media::delete(conn, id)).await?;
+    state.content_changed().await?;
 
     Ok(Redirect::to("/admin/media"))
+}
+
+fn uses_media(collection: Option<&CollectionConfig>, post: &Post, filename: &str) -> bool {
+    collection.is_some_and(|c| {
+        c.fields.iter().any(|(name, ty)| {
+            *ty == crate::config::FieldType::Media && post.fields.get(name).and_then(|v| v.as_str()) == Some(filename)
+        })
+    })
 }
 
 #[cfg(test)]

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}{{ item.title }} — {{ site.title }}{% endblock %}
+{% block content %}
+<article class="post">
+  {% if item.published_at_human %}
+  <time class="post-date" datetime="{{ item.published_at }}">{{ item.published_at_human }}</time>
+  {% endif %}
+  <h1>{{ item.title }}</h1>
+  {% if item.fields %}
+  <dl class="item-fields">
+    {% for name, value in item.fields|items %}{% if value is not none %}
+    <dt>{{ name }}</dt>
+    <dd>{% if value is mapping %}<img src="{{ value.url }}" alt="{{ name }}">{% else %}{{ value }}{% endif %}</dd>
+    {% endif %}{% endfor %}
+  </dl>
+  {% endif %}
+  <div class="post-body">{{ item.html|safe }}</div>
+  {% for group in item.taxonomies %}
+  <p class="tags">
+    <span class="taxonomy-label">{{ group.taxonomy }}:</span>
+    {% for term in group.terms %}<a href="/{{ group.taxonomy }}/{{ term.slug }}">#{{ term.name }}</a>{% endfor %}
+  </p>
+  {% endfor %}
+</article>
+{% endblock %}

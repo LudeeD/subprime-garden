@@ -1,8 +1,10 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
-use super::models::{Post, PostKind, PostStatus};
-use crate::config::SiteConfig;
+use super::models::{Post, PostStatus};
+use crate::config::{CollectionConfig, Config};
 use crate::content::slug::slugify;
+
+pub type Fields = serde_json::Map<String, serde_json::Value>;
 
 pub struct NewPost {
     pub slug: String,
@@ -11,23 +13,24 @@ pub struct NewPost {
     pub html: String,
     pub excerpt: String,
     pub status: PostStatus,
-    pub kind: PostKind,
+    pub collection: String,
+    pub fields: Fields,
 }
 
-const SELECT_COLUMNS: &str =
-    "id, slug, title, markdown, html, excerpt, status, kind, created_at, updated_at, published_at";
+pub(crate) const SELECT_COLUMNS: &str = "id, slug, title, markdown, html, excerpt, status, collection, fields, \
+     created_at, updated_at, published_at";
 
-/// Appends `-2`, `-3`, ... until the slug is free — neither another post's
-/// nor a path the router already owns (see `SiteConfig::is_reserved_path`).
-/// `exclude_id` lets an existing post keep its own slug while editing.
+/// Appends `-2`, `-3`, ... until the slug is free — neither another item's
+/// nor a path the router already owns (see `Config::is_reserved_path`).
+/// `exclude_id` lets an existing item keep its own slug while editing.
 pub fn unique_slug(
     conn: &Connection,
-    site: &SiteConfig,
+    config: &Config,
     title: &str,
     exclude_id: Option<i64>,
 ) -> rusqlite::Result<String> {
     let taken = |slug: &str| -> rusqlite::Result<bool> {
-        Ok(site.is_reserved_path(slug) || slug_exists(conn, slug, exclude_id)?)
+        Ok(config.is_reserved_path(slug) || slug_exists(conn, slug, exclude_id)?)
     };
     let base = slugify(title);
     if !taken(&base)? {
@@ -58,8 +61,8 @@ pub fn insert(conn: &Connection, new: &NewPost) -> rusqlite::Result<i64> {
         None
     };
     conn.execute(
-        "INSERT INTO posts (slug, title, markdown, html, excerpt, status, kind, published_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO posts (slug, title, markdown, html, excerpt, status, collection, fields, published_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             new.slug,
             new.title,
@@ -67,7 +70,8 @@ pub fn insert(conn: &Connection, new: &NewPost) -> rusqlite::Result<i64> {
             new.html,
             new.excerpt,
             new.status.as_str(),
-            new.kind.as_str(),
+            new.collection,
+            fields_json(&new.fields),
             published_at,
         ],
     )?;
@@ -83,16 +87,17 @@ pub struct ImportPost {
     pub html: String,
     pub excerpt: String,
     pub status: PostStatus,
-    pub kind: PostKind,
+    pub collection: String,
+    pub fields: Fields,
     pub created_at: String,
     pub published_at: Option<String>,
 }
 
 pub fn insert_imported(conn: &Connection, new: &ImportPost) -> rusqlite::Result<i64> {
     conn.execute(
-        "INSERT INTO posts (slug, title, markdown, html, excerpt, status, kind,
+        "INSERT INTO posts (slug, title, markdown, html, excerpt, status, collection, fields,
              created_at, updated_at, published_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?10)",
         params![
             new.slug,
             new.title,
@@ -100,7 +105,8 @@ pub fn insert_imported(conn: &Connection, new: &ImportPost) -> rusqlite::Result<
             new.html,
             new.excerpt,
             new.status.as_str(),
-            new.kind.as_str(),
+            new.collection,
+            fields_json(&new.fields),
             new.created_at,
             new.published_at,
         ],
@@ -124,6 +130,8 @@ pub struct PostEdit {
     pub markdown: String,
     pub html: String,
     pub excerpt: String,
+    pub collection: String,
+    pub fields: Fields,
     pub created_at: String,
     pub published_at: Option<String>,
 }
@@ -131,14 +139,16 @@ pub struct PostEdit {
 pub fn update_content(conn: &Connection, id: i64, edit: &PostEdit) -> rusqlite::Result<()> {
     conn.execute(
         "UPDATE posts SET slug = ?1, title = ?2, markdown = ?3, html = ?4, excerpt = ?5,
-             created_at = ?6, published_at = ?7, updated_at = ?8
-         WHERE id = ?9",
+             collection = ?6, fields = ?7, created_at = ?8, published_at = ?9, updated_at = ?10
+         WHERE id = ?11",
         params![
             edit.slug,
             edit.title,
             edit.markdown,
             edit.html,
             edit.excerpt,
+            edit.collection,
+            fields_json(&edit.fields),
             edit.created_at,
             edit.published_at,
             now(),
@@ -205,48 +215,52 @@ pub fn get_by_slug(
     }
 }
 
-/// Published posts (kind='post'), newest first — the public index/archive feed.
-pub fn list_published(conn: &Connection, limit: u32, offset: u32) -> rusqlite::Result<Vec<Post>> {
+/// Published items of the given collections, newest first, at most `limit`
+/// of them — the home page and the feeds, given the `in_feed` collections.
+pub fn list_published_in(
+    conn: &Connection,
+    collections: &[String],
+    limit: u32,
+) -> rusqlite::Result<Vec<Post>> {
+    let placeholders = vec!["?"; collections.len()].join(", ");
     let mut stmt = conn.prepare(&format!(
         "SELECT {SELECT_COLUMNS} FROM posts
-         WHERE status = 'published' AND kind = 'post'
+         WHERE status = 'published' AND collection IN ({placeholders})
          ORDER BY published_at DESC
-         LIMIT ?1 OFFSET ?2"
+         LIMIT {limit}"
     ))?;
-    let rows = stmt.query_map(params![limit, offset], Post::from_row)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(collections), Post::from_row)?;
     rows.collect()
 }
 
-/// Every published post (kind='post'), newest first, uncapped — the archive
-/// page and feeds, which don't paginate.
-pub fn list_all_published(conn: &Connection) -> rusqlite::Result<Vec<Post>> {
+/// Every published item of one collection, in the collection's `sort`
+/// order — its `/<name>` list page. Items missing the sort field go last.
+pub fn list_collection(conn: &Connection, collection: &CollectionConfig) -> rusqlite::Result<Vec<Post>> {
+    let (key, desc) = collection.sort_key();
+    // `Config::validate` limits field names to [a-z0-9_], so the key is safe
+    // to put into the SQL as-is.
+    let expr = match key {
+        "published_at" => "published_at".to_string(),
+        "title" => "title COLLATE NOCASE".to_string(),
+        field => format!("json_extract(fields, '$.{field}')"),
+    };
+    let dir = if desc { "DESC" } else { "ASC" };
     let mut stmt = conn.prepare(&format!(
         "SELECT {SELECT_COLUMNS} FROM posts
-         WHERE status = 'published' AND kind = 'post'
-         ORDER BY published_at DESC"
+         WHERE status = 'published' AND collection = ?1
+         ORDER BY {expr} IS NULL, {expr} {dir}, published_at DESC"
     ))?;
-    let rows = stmt.query_map([], Post::from_row)?;
+    let rows = stmt.query_map(params![collection.name], Post::from_row)?;
     rows.collect()
 }
 
-/// Every published post or page, newest first — the sitemap, which links to
-/// both.
-pub fn list_all_published_any_kind(conn: &Connection) -> rusqlite::Result<Vec<Post>> {
+/// Every published item in every collection, newest first — the sitemap and
+/// the `get_item` template function.
+pub fn list_all_published(conn: &Connection) -> rusqlite::Result<Vec<Post>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT {SELECT_COLUMNS} FROM posts
          WHERE status = 'published'
          ORDER BY published_at DESC"
-    ))?;
-    let rows = stmt.query_map([], Post::from_row)?;
-    rows.collect()
-}
-
-/// Every published page (kind='page'), keyed by slug for template lookups —
-/// see the `pages` template global in `render::render`, which lets any
-/// template embed one by slug (e.g. `{{ pages.about.html|safe }}`).
-pub fn list_published_pages(conn: &Connection) -> rusqlite::Result<Vec<Post>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {SELECT_COLUMNS} FROM posts WHERE status = 'published' AND kind = 'page'"
     ))?;
     let rows = stmt.query_map([], Post::from_row)?;
     rows.collect()
@@ -278,6 +292,10 @@ pub fn list_all(
         None => stmt.query_map([], Post::from_row)?,
     };
     rows.collect()
+}
+
+fn fields_json(fields: &Fields) -> String {
+    serde_json::Value::Object(fields.clone()).to_string()
 }
 
 /// Matches the `strftime('%Y-%m-%dT%H:%M:%fZ','now')` format used by the

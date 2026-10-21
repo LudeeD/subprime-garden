@@ -1,23 +1,17 @@
 {% extends "base.html" %}
 {% block content %}
-{% if pages.about %}
+{% set about = get_item("about") %}
+{% if about %}
 <section class="featured-page">
-  <h2>{{ pages.about.title }}</h2>
-  <div class="post-body">{{ pages.about.html|safe }}</div>
+  <h2>{{ about.title }}</h2>
+  <div class="post-body">{{ about.html|safe }}</div>
 </section>
 {% endif %}
-<h1>Recent posts</h1>
+<h1>Recent</h1>
 <ul class="post-list">
-{% for post in posts[:10] %}
-<li class="post-item">
-  <div class="post-header">
-    <a href="/{{ post.slug }}" class="post-title-link">{{ post.title }}</a>
-    <time class="post-date" datetime="{{ post.published_at }}">{{ post.published_at_human }}</time>
-  </div>
-</li>
-{% endfor %}
+{% for item in items[:10] %}{% include [item.collection ~ "_card.html", "card.html"] %}{% endfor %}
 </ul>
-{% if not posts %}
+{% if not items %}
 <p class="no-posts">Nothing published yet.</p>
 {% endif %}
 {% endblock %}

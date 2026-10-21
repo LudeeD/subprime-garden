@@ -17,6 +17,17 @@ struct StockStatic;
 
 const GARDEN_TOML_EXAMPLE: &str = include_str!("../../garden.toml.example");
 
+/// Added to a garden.toml that predates collections: the two collections
+/// that the old fixed post/page kinds became (see migration 0005).
+const STOCK_COLLECTIONS: &str = r#"
+[[collections]]
+name = "posts"
+in_feed = true
+
+[[collections]]
+name = "pages"
+"#;
+
 pub fn run(dir: &Path, force: bool, reset_password: bool) -> Result<()> {
     theme(dir, force)?;
 
@@ -86,8 +97,19 @@ fn configure(config_path: &Path, force: bool, reset_password: bool) -> Result<()
 
     resolve_password(&mut doc, reset_password)?;
     resolve_session_secret(&mut doc, reset_password)?;
+    add_stock_collections(&mut doc)?;
 
     std::fs::write(config_path, doc.to_string())?;
+    Ok(())
+}
+
+fn add_stock_collections(doc: &mut toml_edit::DocumentMut) -> Result<()> {
+    if doc.contains_key("collections") {
+        return Ok(());
+    }
+    let stock: toml_edit::DocumentMut = STOCK_COLLECTIONS.parse().expect("STOCK_COLLECTIONS is valid TOML");
+    doc["collections"] = stock["collections"].clone();
+    println!("added the stock posts and pages collections to garden.toml");
     Ok(())
 }
 
@@ -179,6 +201,20 @@ pub fn stock_env() -> minijinja::Environment<'static> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_older_garden_toml_gets_the_stock_collections() {
+        let mut doc: toml_edit::DocumentMut = "[site]\ntitle = \"x\"\n".parse().unwrap();
+        super::add_stock_collections(&mut doc).unwrap();
+        let config: crate::config::Config = toml::from_str(&doc.to_string()).unwrap();
+        let names: Vec<_> = config.collections.iter().map(|c| (c.name.as_str(), c.in_feed)).collect();
+        assert_eq!(names, [("posts", true), ("pages", false)]);
+
+        // An existing declaration is left alone.
+        let mut doc: toml_edit::DocumentMut = "[[collections]]\nname = \"notes\"\n".parse().unwrap();
+        super::add_stock_collections(&mut doc).unwrap();
+        assert_eq!(doc.to_string(), "[[collections]]\nname = \"notes\"\n");
+    }
+
     /// The stock templates `theme`/`init` scaffold onto disk must parse as
     /// valid minijinja alongside the baked-in admin templates, since a fresh
     /// site combines both (site templates from disk, admin from the binary).

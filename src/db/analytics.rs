@@ -159,10 +159,10 @@ pub struct LabelCount {
     pub views: i64,
 }
 
-/// Top posts (and pages) by view count over the last `days` days (rolled-up
-/// + today's raw), by title. Grouped on the `post_id` each pageview was
-/// resolved to, so listing pages like `/` and `/archive` don't show up and a
-/// post keeps its history when its slug changes.
+/// Top items by view count over the last `days` days (rolled-up plus
+/// today's raw), by title. Grouped on the `post_id` each pageview was
+/// resolved to, so list pages like `/` and `/posts` don't show up and an
+/// item keeps its history when its slug changes.
 pub fn top_posts(conn: &Connection, days: u32) -> rusqlite::Result<Vec<LabelCount>> {
     let mut stmt = conn.prepare(
         "SELECT posts.title, SUM(stats.views) AS total FROM (
@@ -221,7 +221,7 @@ pub fn total_views(conn: &Connection) -> rusqlite::Result<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::models::{PostKind, PostStatus};
+    use crate::db::models::PostStatus;
     use crate::db::posts;
 
     fn conn() -> Connection {
@@ -283,7 +283,8 @@ mod tests {
                 html: String::new(),
                 excerpt: String::new(),
                 status: PostStatus::Published,
-                kind: PostKind::Post,
+                collection: "posts".into(),
+                fields: Default::default(),
             },
         )
         .unwrap();

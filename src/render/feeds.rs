@@ -113,15 +113,16 @@ pub fn rss_feed(site: &SiteView, posts: &[Post]) -> String {
     )
 }
 
-/// Sitemap includes every publicly reachable post/page URL plus the two
-/// static index-style routes; drafts are filtered by the caller (only
+/// Sitemap includes the home page, every collection's list page and every
+/// publicly reachable item URL; drafts are filtered by the caller (only
 /// published rows are ever passed in).
-pub fn sitemap_xml(site: &SiteView, posts_and_pages: &[Post]) -> String {
+pub fn sitemap_xml(site: &SiteView, items: &[Post]) -> String {
     let base = site.base_url.trim_end_matches('/');
-    let mut urls = format!(
-        "  <url><loc>{base}/</loc></url>\n  <url><loc>{base}/archive</loc></url>\n"
-    );
-    for post in posts_and_pages {
+    let mut urls = format!("  <url><loc>{base}/</loc></url>\n");
+    for collection in &site.collections {
+        urls.push_str(&format!("  <url><loc>{base}/{collection}</loc></url>\n"));
+    }
+    for post in items {
         let lastmod = post.updated_at.split('T').next().unwrap_or("").to_string();
         urls.push_str(&format!(
             "  <url><loc>{base}/{slug}</loc><lastmod>{lastmod}</lastmod></url>\n",

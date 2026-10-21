@@ -5,7 +5,7 @@ use anyhow::Context;
 use rusqlite::Connection;
 use serde::Serialize;
 
-use crate::db::models::{PostKind, PostStatus};
+use crate::db::models::PostStatus;
 use crate::db::{posts, taxonomy};
 
 #[derive(Serialize)]
@@ -14,17 +14,20 @@ struct ExportFrontmatter {
     date: String,
     slug: String,
     draft: bool,
-    /// Only written for pages — posts are the default on import.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    kind: Option<&'static str>,
+    /// Always written, so the file imports into the same collection even if
+    /// import's default changes.
+    collection: String,
+    #[serde(skip_serializing_if = "serde_json::Map::is_empty")]
+    fields: serde_json::Map<String, serde_json::Value>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     taxonomies: BTreeMap<String, Vec<String>>,
 }
 
-/// Writes every post/page back out as `.md` with YAML frontmatter — the
+/// Writes every item back out as `.md` with YAML frontmatter — the
 /// markdown body is the stored source verbatim, and an `import` of the same
-/// directory brings back title, slug, kind, draft status, publish date and
-/// taxonomies. `updated_at` is not kept, and a published post's `created_at`
+/// directory brings back title, slug, collection, fields, draft status,
+/// publish date and taxonomies. Media fields hold filenames only, so the
+/// media directory has to be restored before importing them. `updated_at` is not kept, and a published post's `created_at`
 /// becomes its publish date.
 /// Exports whatever taxonomies are actually attached to each post, not just
 /// the ones currently listed in `site.taxonomies` — self-describing, so it
@@ -43,7 +46,8 @@ pub fn run(conn: &Connection, dir: &Path) -> anyhow::Result<()> {
             date: post.published_at.clone().unwrap_or_else(|| post.created_at.clone()),
             slug: post.slug.clone(),
             draft: post.status == PostStatus::Draft,
-            kind: (post.kind == PostKind::Page).then_some("page"),
+            collection: post.collection.clone(),
+            fields: post.fields.clone(),
             taxonomies,
         };
         let yaml = serde_yaml::to_string(&frontmatter)?;
@@ -54,6 +58,6 @@ pub fn run(conn: &Connection, dir: &Path) -> anyhow::Result<()> {
         println!("exported: {}", path.display());
     }
 
-    println!("\n{} posts/pages exported to {}", all.len(), dir.display());
+    println!("\n{} items exported to {}", all.len(), dir.display());
     Ok(())
 }

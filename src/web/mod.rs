@@ -34,23 +34,44 @@ pub struct AppState {
     pub analytics: Arc<AnalyticsHandle>,
     pub page_cache: Arc<PageCache>,
     pub templates: Arc<minijinja::Environment<'static>>,
-    /// The `pages` template global (see `render::load_pages`).
-    pub pages: Arc<RwLock<minijinja::Value>>,
+    /// Terms, media and published items for building item views (see
+    /// `render::Content`).
+    pub content: Arc<RwLock<Arc<render::Content>>>,
 }
 
 impl AppState {
-    /// Call after every content write (and once at startup): reloads the
-    /// `pages` template global and drops every cached page.
+    /// Call after every content or media write (and once at startup):
+    /// reloads `content` and drops every cached page.
     pub async fn content_changed(&self) -> Result<(), AppError> {
-        let pages = crate::db::with_conn(&self.db, render::load_pages).await?;
-        *self.pages.write().expect("pages lock poisoned") = pages;
+        let config = self.config.clone();
+        let content = crate::db::with_conn(&self.db, move |conn| render::Content::load(conn, &config)).await?;
+        *self.content.write().expect("content lock poisoned") = Arc::new(content);
         self.page_cache.invalidate_all();
         Ok(())
     }
 
+    pub fn content(&self) -> Arc<render::Content> {
+        self.content.read().expect("content lock poisoned").clone()
+    }
+
     pub fn render<T: render::TemplateCtx>(&self, ctx: &T) -> Result<String, AppError> {
-        let pages = self.pages.read().expect("pages lock poisoned").clone();
-        render::render(&self.templates, pages, ctx)
+        render::render(&self.templates, &[T::NAME], &self.content(), ctx)
+    }
+
+    /// Renders with the first of `names` the theme has, e.g.
+    /// `render::entry_templates`.
+    pub fn render_first<S: serde::Serialize>(&self, names: &[String], ctx: &S) -> Result<String, AppError> {
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        render::render(&self.templates, &names, &self.content(), ctx)
+    }
+
+    /// An item page, with the item's collection's entry template.
+    pub fn render_entry(&self, post: &crate::db::models::Post) -> Result<String, AppError> {
+        let ctx = render::EntryTemplate {
+            site: render::SiteView::from(&*self.config),
+            item: self.content().item(&self.config, post),
+        };
+        self.render_first(&render::entry_templates(&post.collection), &ctx)
     }
 }
 
@@ -63,8 +84,6 @@ impl FromRef<AppState> for Key {
 pub fn build_router(state: AppState) -> Router {
     let mut public = Router::new()
         .route("/", get(public::index))
-        .route("/archive", get(public::archive))
-        .route("/tag/:slug", get(public::legacy_tag_redirect))
         .route("/feed.xml", get(public::feed_atom))
         .route("/rss.xml", get(public::feed_rss))
         .route("/sitemap.xml", get(public::sitemap))
@@ -95,7 +114,20 @@ pub fn build_router(state: AppState) -> Router {
             );
     }
 
-    let public = public.route("/:slug", get(public::show_post));
+    // One list page per collection (e.g. `/books`). `Config::validate`
+    // keeps collection names clear of the routes above.
+    for collection in &state.config.collections {
+        let name = collection.name.clone();
+        public = public.route(
+            &format!("/{name}"),
+            get(move |state: State<AppState>, headers: HeaderMap| {
+                let name = name.clone();
+                async move { public::collection(state, headers, name).await }
+            }),
+        );
+    }
+
+    let public = public.route("/:slug", get(public::show_item));
 
     // Content-hashed filenames make every response immutable — cache forever.
     let media = Router::new()

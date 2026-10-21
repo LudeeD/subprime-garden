@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use rusqlite::Connection;
 
-use crate::config::{MarkdownConfig, SiteConfig};
-use crate::content::{frontmatter, markdown, slug};
+use crate::config::Config;
+use crate::content::{fields, frontmatter, markdown, slug};
 use crate::db::media;
-use crate::db::models::{PostKind, PostStatus};
+use crate::db::models::PostStatus;
 use crate::db::posts::{self, ImportPost, PostEdit};
 use crate::db::taxonomy;
 
@@ -20,8 +20,7 @@ pub fn run(
     conn: &mut Connection,
     dir: &Path,
     opts: &ImportOptions,
-    markdown_cfg: &MarkdownConfig,
-    site: &SiteConfig,
+    config: &Config,
 ) -> anyhow::Result<()> {
     let files = find_markdown_files(dir)?;
     if files.is_empty() {
@@ -34,7 +33,7 @@ pub fn run(
     let mut errors = 0;
 
     for path in files {
-        match import_one(conn, &path, opts, markdown_cfg, site) {
+        match import_one(conn, &path, opts, config) {
             Ok(Outcome::Inserted(slug)) => {
                 println!("imported:  {slug:<40} {}", path.display());
                 imported += 1;
@@ -72,8 +71,7 @@ fn import_one(
     conn: &mut Connection,
     path: &Path,
     opts: &ImportOptions,
-    markdown_cfg: &MarkdownConfig,
-    site: &SiteConfig,
+    config: &Config,
 ) -> anyhow::Result<Outcome> {
     let raw = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let mtime = std::fs::metadata(path)
@@ -100,9 +98,18 @@ fn import_one(
 
     // Import keeps URLs as written, so unlike the admin form it doesn't
     // quietly rename — the author picks the new slug.
-    if site.is_reserved_path(&desired_slug) {
+    if config.is_reserved_path(&desired_slug) {
         anyhow::bail!("slug {desired_slug:?} is a reserved path — set a different `slug` in the frontmatter");
     }
+
+    let collection_name = parsed.frontmatter.collection.as_deref().unwrap_or("posts");
+    let Some(collection) = config.collection(collection_name) else {
+        anyhow::bail!("collection {collection_name:?} is not declared in garden.toml");
+    };
+    let item_fields = fields::validate(&collection.fields, &parsed.frontmatter.fields, &|filename| {
+        matches!(media::get_by_filename(conn, filename), Ok(Some(_)))
+    })
+    .map_err(|e| anyhow::anyhow!("{e} (restore the media directory before importing media fields)"))?;
 
     let created_at = frontmatter::resolve_date(parsed.frontmatter.date.as_deref(), mtime);
     let status = match parsed.frontmatter.draft {
@@ -132,11 +139,11 @@ fn import_one(
 
     // Post row and taxonomy terms land together or not at all.
     let tx = conn.unchecked_transaction()?;
-    let rendered = markdown::render(&body, markdown_cfg, &|filename| media::variant_lookup(conn, filename));
+    let rendered = markdown::render(&body, &config.markdown, &|filename| media::variant_lookup(conn, filename));
     let mut term_ids_by_taxonomy = Vec::new();
     let mut unconfigured = Vec::new();
     for (name, names) in &parsed.frontmatter.taxonomies {
-        if !site.taxonomies.contains(name) {
+        if !config.site.taxonomies.contains(name) {
             unconfigured.push(name.as_str());
             continue;
         }
@@ -161,6 +168,8 @@ fn import_one(
                     markdown: body,
                     html: rendered.html,
                     excerpt: rendered.excerpt,
+                    collection: collection.name.clone(),
+                    fields: item_fields,
                     created_at,
                     published_at,
                 },
@@ -178,7 +187,8 @@ fn import_one(
                     html: rendered.html,
                     excerpt: rendered.excerpt,
                     status,
-                    kind: PostKind::from_str(parsed.frontmatter.kind.as_deref().unwrap_or("post")),
+                    collection: collection.name.clone(),
+                    fields: item_fields,
                     created_at,
                     published_at,
                 },

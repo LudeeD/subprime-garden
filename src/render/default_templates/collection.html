@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ collection.label }} — {{ site.title }}{% endblock %}
+{% block content %}
+<h1>{{ collection.label }}</h1>
+<ul class="post-list">
+{% for item in items %}{% include [item.collection ~ "_card.html", "card.html"] %}{% endfor %}
+</ul>
+{% if not items %}
+<p class="no-posts">Nothing published yet.</p>
+{% endif %}
+{% endblock %}

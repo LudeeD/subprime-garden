@@ -17,6 +17,10 @@ dev:
             "$bin" init .
         # init has no prompt for taxonomies; the demo posts also use "series".
         sed -i 's/^taxonomies = \["tags"\]$/taxonomies = ["tags", "series"]/' garden.toml
+        # The demo also has a book, in a collection with typed fields.
+        printf '%s\n' '' '[[collections]]' 'name = "books"' 'sort = "finished desc"' \
+            'fields.author = "text"' 'fields.rating = "int"' 'fields.finished = "date"' \
+            'fields.shelf = { choice = ["read", "reading", "want-to-read"] }' >> garden.toml
         "$bin" import demo/posts --published
     fi
     "$bin" theme . --force > /dev/null
