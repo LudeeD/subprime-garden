@@ -306,6 +306,33 @@ async fn return_visits_count_as_pageviews_but_feed_revalidations_do_not() {
 }
 
 #[tokio::test]
+async fn prefetches_are_not_pageviews() {
+    let app = TestApp::new().await;
+
+    // Prefetches first, so if they were tracked they'd show up ahead of "/".
+    for (name, value) in [("sec-purpose", "prefetch"), ("x-moz", "prefetch")] {
+        let request = Request::get("/posts").header(name, value).body(Body::empty()).unwrap();
+        assert_eq!(app.send(request).await.0, StatusCode::OK);
+    }
+    app.get("/").await;
+
+    assert_eq!(app.pageview_paths(1).await, ["/"]);
+}
+
+#[tokio::test]
+async fn static_files_are_cached_for_an_hour_but_missing_ones_are_not() {
+    let app = TestApp::new().await;
+
+    let found = app.router.clone().oneshot(Request::get("/static/style.css").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(found.status(), StatusCode::OK);
+    assert_eq!(found.headers()[header::CACHE_CONTROL], "public, max-age=3600");
+
+    let missing = app.router.clone().oneshot(Request::get("/static/nope.css").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    assert!(missing.headers().get(header::CACHE_CONTROL).is_none());
+}
+
+#[tokio::test]
 async fn posts_cannot_take_a_reserved_slug() {
     let app = TestApp::new().await;
 

@@ -137,9 +137,21 @@ pub fn build_router(state: AppState) -> Router {
             HeaderValue::from_static("public, max-age=31536000, immutable"),
         ));
 
-    // Not content-hashed, so no long-lived Cache-Control here — ServeDir
-    // still handles Last-Modified/conditional GETs for us.
-    let static_files = Router::new().nest_service("/static", ServeDir::new("./static"));
+    // Not content-hashed, so only an hour: long enough that page loads don't
+    // wait on revalidating the stylesheet and fonts, short enough that a theme
+    // deploy reaches everyone soon. Only successes are cached, so a file that
+    // was missing shows up as soon as it's deployed. ServeDir still handles
+    // Last-Modified/conditional GETs once the hour is up.
+    let static_files = Router::new()
+        .nest_service("/static", ServeDir::new("./static"))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            |response: &axum::response::Response| {
+                let status = response.status();
+                (status.is_success() || status == axum::http::StatusCode::NOT_MODIFIED)
+                    .then(|| HeaderValue::from_static("public, max-age=3600"))
+            },
+        ));
 
     Router::new()
         .merge(public)

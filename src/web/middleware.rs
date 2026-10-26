@@ -42,10 +42,12 @@ pub async fn track_pageview(
         .map(str::to_string);
     let trust_proxy_headers = state.config.server.trust_proxy_headers;
     let headers = req.headers().clone();
+    let prefetch = is_prefetch(&headers);
 
     let response = next.run(req).await;
 
     if state.analytics.enabled
+        && !prefetch
         && should_track(&method, &path, &response)
         && !(state.analytics.ignore_bots && analytics::hashing::is_bot(&user_agent))
     {
@@ -61,6 +63,18 @@ pub async fn track_pageview(
     }
 
     response
+}
+
+/// A browser fetching a page ahead of a click that may never come (a hovered
+/// link, speculation rules). Chrome and current Firefox send `Sec-Purpose`;
+/// older Firefox sent `X-Moz`, older Chrome `Purpose`.
+fn is_prefetch(headers: &axum::http::HeaderMap) -> bool {
+    ["sec-purpose", "purpose", "x-moz"].iter().any(|name| {
+        headers
+            .get(*name)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.contains("prefetch"))
+    })
 }
 
 fn should_track(method: &Method, path: &str, response: &Response) -> bool {
